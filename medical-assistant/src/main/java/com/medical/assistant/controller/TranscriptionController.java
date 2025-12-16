@@ -2,7 +2,7 @@ package com.medical.assistant.controller;
 
 import com.medical.assistant.model.dto.TranscriptionRequest;
 import com.medical.assistant.model.dto.TranscriptionResponse;
-import com.medical.assistant.model.entity.Transcript;
+import com.medical.assistant.model.entity.TranscriptionRecord;
 import com.medical.assistant.service.TranscriptionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -138,11 +138,11 @@ public class TranscriptionController {
      * 查询转写记录
      */
     @GetMapping("/record/{sessionId}")
-    public ResponseEntity<Transcript> getTranscriptionRecord(
+    public ResponseEntity<TranscriptionRecord> getTranscriptionRecord(
             @PathVariable String sessionId) {
 
         try {
-            Transcript record = transcriptionService.getTranscriptionBySessionId(sessionId);
+            TranscriptionRecord record = transcriptionService.getTranscriptionBySessionId(sessionId);
 
             if (record == null) {
                 return ResponseEntity.notFound().build();
@@ -160,11 +160,11 @@ public class TranscriptionController {
      * 查询用户的所有转写记录
      */
     @GetMapping("/records/user/{userId}")
-    public ResponseEntity<List<Transcript>> getUserTranscriptions(
+    public ResponseEntity<List<TranscriptionRecord>> getUserTranscriptions(
             @PathVariable String userId) {
 
         try {
-            List<Transcript> records = transcriptionService.getTranscriptionsByUserId(userId);
+            List<TranscriptionRecord> records = transcriptionService.getTranscriptionsByUserId(userId);
             return ResponseEntity.ok(records);
 
         } catch (Exception e) {

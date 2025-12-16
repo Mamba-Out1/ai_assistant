@@ -3,7 +3,7 @@ package com.medical.assistant.service.impl;
 import com.medical.assistant.config.XunfeiConfig;
 import com.medical.assistant.model.dto.TranscriptionRequest;
 import com.medical.assistant.model.dto.TranscriptionResponse;
-import com.medical.assistant.model.entity.Transcript;
+import com.medical.assistant.model.entity.TranscriptionRecord;
 import com.medical.assistant.repository.TranscriptionRepository;
 import com.medical.assistant.service.TranscriptionService;
 import com.medical.assistant.util.SignatureUtil;
@@ -45,7 +45,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
         logger.info("【开始转写】用户ID: {}", request.getUserId());
 
         // 创建转写记录
-        Transcript record = createTranscriptionRecord(request);
+        TranscriptionRecord record = createTranscriptionRecord(request);
         record.setStatus("PROCESSING");
         record = transcriptionRepository.save(record);
         final Long recordId = record.getId();
@@ -83,7 +83,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
 
                 // 更新记录的sessionId
                 try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
+                    TranscriptionRecord updateRecord = transcriptionRepository.findById(recordId).orElse(null);
                     if (updateRecord != null) {
                         updateRecord.setSessionId(sid);
                         transcriptionRepository.save(updateRecord);
@@ -104,7 +104,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
 
                 // 保存到数据库
                 try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
+                    TranscriptionRecord updateRecord = transcriptionRepository.findById(recordId).orElse(null);
                     if (updateRecord != null) {
                         updateRecord.setTranscriptionText(fullText);
                         updateRecord.setStatus("COMPLETED");
@@ -125,7 +125,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
 
                 // 更新记录状态
                 try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
+                    TranscriptionRecord updateRecord = transcriptionRepository.findById(recordId).orElse(null);
                     if (updateRecord != null) {
                         updateRecord.setStatus("FAILED");
                         updateRecord.setErrorMessage(e.getMessage());
@@ -309,8 +309,8 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     /**
      * 创建转写记录
      */
-    private Transcript createTranscriptionRecord(TranscriptionRequest request) {
-        Transcript record = new Transcript();
+    private TranscriptionRecord createTranscriptionRecord(TranscriptionRequest request) {
+        TranscriptionRecord record = new TranscriptionRecord();
         record.setSessionId(UUID.randomUUID().toString()); // 临时ID
         record.setUserId(request.getUserId());
         record.setAudioFormat(request.getAudioEncode());
@@ -334,7 +334,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
         logger.info("【流式转写】开始，用户ID: {}", request.getUserId());
 
         // 创建转写记录
-        Transcript record = createTranscriptionRecord(request);
+        TranscriptionRecord record = createTranscriptionRecord(request);
         record.setStatus("PROCESSING");
         record = transcriptionRepository.save(record);
         final Long recordId = record.getId();
@@ -363,7 +363,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             public void onHandshakeSuccess(String sid) {
                 logger.info("【流式WebSocket】握手成功，SessionID: {}", sid);
                 try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
+                    TranscriptionRecord updateRecord = transcriptionRepository.findById(recordId).orElse(null);
                     if (updateRecord != null) {
                         updateRecord.setSessionId(sid);
                         transcriptionRepository.save(updateRecord);
@@ -382,7 +382,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             public void onTranscriptionComplete(String fullText) {
                 logger.info("【流式完成】文本长度: {}", fullText.length());
                 try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
+                    TranscriptionRecord updateRecord = transcriptionRepository.findById(recordId).orElse(null);
                     if (updateRecord != null) {
                         updateRecord.setTranscriptionText(fullText);
                         updateRecord.setStatus("COMPLETED");
@@ -397,7 +397,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             public void onError(Exception e) {
                 logger.error("【流式错误】{}", e.getMessage());
                 try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
+                    TranscriptionRecord updateRecord = transcriptionRepository.findById(recordId).orElse(null);
                     if (updateRecord != null) {
                         updateRecord.setStatus("FAILED");
                         updateRecord.setErrorMessage(e.getMessage());
@@ -470,142 +470,24 @@ public class TranscriptionServiceImpl implements TranscriptionService {
         activeClients.remove(sessionId);
 
         // 查询数据库记录
-        Transcript record = transcriptionRepository.findBySessionId(sessionId).orElse(null);
+        TranscriptionRecord record = transcriptionRepository.findBySessionId(sessionId).orElse(null);
         Long recordId = record != null ? record.getId() : null;
 
         return TranscriptionResponse.success(sessionId, fullText, recordId);
     }
 
     @Override
-    public Transcript getTranscriptionBySessionId(String sessionId) {
+    public TranscriptionRecord getTranscriptionBySessionId(String sessionId) {
         return transcriptionRepository.findBySessionId(sessionId).orElse(null);
     }
 
     @Override
-    public List<Transcript> getTranscriptionsByUserId(String userId) {
+    public List<TranscriptionRecord> getTranscriptionsByUserId(String userId) {
         return transcriptionRepository.findByUserId(userId);
     }
 
     @Override
-    public Transcript saveTranscriptionRecord(Transcript record) {
+    public TranscriptionRecord saveTranscriptionRecord(TranscriptionRecord record) {
         return transcriptionRepository.save(record);
     }
-
-    // 在TranscriptionServiceImpl类中添加以下内容
-
-    @Autowired
-    private TranscriptRepository transcriptRepository;
-
-    @Autowired
-    private MedicalSummaryRepository medicalSummaryRepository;
-
-    @Autowired
-    private DifyService difyService;
-
-    @Autowired
-    private VisitRepository visitRepository;
-
-    // 修改原有的transcribeAudio方法，添加保存到transcripts表的逻辑
-    @Override
-    public TranscriptionResponse transcribeAudio(TranscriptionRequest request) throws Exception {
-        logger.info("【开始转写】用户ID: {}", request.getUserId());
-
-        // ... 原有代码保持不变，直到获得转写结果 ...
-
-        // 在返回结果前，保存到transcripts表
-        String fullText = client.getFullTranscription();
-
-        // 如果有visitId，保存转录结果
-        if (request.getVisitId() != null) {
-            Transcript transcript = saveTranscript(
-                    request.getVisitId(),
-                    fullText,
-                    record.getAudioDuration(),
-                    request.getAudioEncode()
-            );
-            logger.info("【数据库】转录结果已保存到transcripts表，ID: {}", transcript.getTranscriptId());
-        }
-
-        return TranscriptionResponse.success(sessionId[0], fullText, recordId);
-    }
-
-    @Override
-    public Transcript saveTranscript(String visitId, String transcriptText, Integer audioDuration, String audioFormat) {
-        try {
-            Transcript transcript = new Transcript();
-            transcript.setTranscriptId(UUID.randomUUID().toString());
-            transcript.setVisitId(visitId);
-            transcript.setTranscriptText(transcriptText);
-            transcript.setAudioDuration(audioDuration);
-            transcript.setAudioFormat(audioFormat);
-            transcript.setStatus(Transcript.TranscriptStatus.COMPLETED);
-
-            return transcriptRepository.save(transcript);
-        } catch (Exception e) {
-            logger.error("保存转录结果失败", e);
-            throw new RuntimeException("保存转录结果失败", e);
-        }
-    }
-
-    @Override
-    public Flux<String> generateMedicalSummaryStream(String visitId, String transcriptText,
-                                                     String doctorId, String patientId) {
-
-        // 获取或创建会话ID
-        String conversationId = visitId; // 使用visitId作为会话ID
-
-        // 用于收集完整响应
-        StringBuilder completeResponse = new StringBuilder();
-
-        return difyService.generateMedicalSummaryStream(transcriptText, doctorId, conversationId)
-                .map(response -> {
-                    String content = "";
-
-                    if ("message".equals(response.getEvent()) && response.getAnswer() != null) {
-                        content = response.getAnswer();
-                        completeResponse.append(content);
-                    } else if ("message_end".equals(response.getEvent())) {
-                        // 消息结束，保存病历总结
-                        try {
-                            MedicalSummaryDto summaryDto = difyService.extractMedicalSummary(completeResponse.toString());
-                            summaryDto.setVisitId(visitId);
-                            summaryDto.setDoctorId(doctorId);
-                            summaryDto.setPatientId(patientId);
-                            summaryDto.setRawResponse(completeResponse.toString());
-
-                            saveMedicalSummary(summaryDto);
-                            content = "[COMPLETED]";
-                        } catch (Exception e) {
-                            logger.error("保存病历总结失败", e);
-                            content = "[ERROR]" + e.getMessage();
-                        }
-                    }
-
-                    return content;
-                })
-                .filter(content -> !content.isEmpty());
-    }
-
-    @Override
-    public void saveMedicalSummary(MedicalSummaryDto summaryDto) {
-        try {
-            MedicalSummary summary = new MedicalSummary();
-            summary.setSummaryId(UUID.randomUUID().toString());
-            summary.setVisitId(summaryDto.getVisitId());
-            summary.setDoctorId(summaryDto.getDoctorId());
-            summary.setPatientId(summaryDto.getPatientId());
-            summary.setSymptomDetails(summaryDto.getSymptomDetails());
-            summary.setVitalSigns(summaryDto.getVitalSigns());
-            summary.setPastMedicalHistory(summaryDto.getPastMedicalHistory());
-            summary.setCurrentMedications(summaryDto.getCurrentMedications());
-
-            medicalSummaryRepository.save(summary);
-            logger.info("【数据库】病历总结已保存，summaryId: {}", summary.getSummaryId());
-
-        } catch (Exception e) {
-            logger.error("保存病历总结失败", e);
-            throw new RuntimeException("保存病历总结失败", e);
-        }
-    }
-
 }

@@ -42,9 +42,3 @@ logging:
   level:
     com.medical.assistant: DEBUG
     org.java_websocket: INFO
-
-dify:
-  api-url: https://api.dify.ai/v1
-  api-key: app-qTzG4UHCbUJOYqrXeGCuyFxw
-
-# 添加WebFlux依赖（用于响应式编程）
