@@ -3,9 +3,14 @@ package com.medical.assistant.service.impl;
 import com.medical.assistant.config.XunfeiConfig;
 import com.medical.assistant.model.dto.TranscriptionRequest;
 import com.medical.assistant.model.dto.TranscriptionResponse;
+import com.medical.assistant.model.dto.MedicalSummaryDto;
 import com.medical.assistant.model.entity.Transcript;
-import com.medical.assistant.repository.TranscriptionRepository;
+import com.medical.assistant.model.entity.MedicalSummary;
+import com.medical.assistant.repository.TranscriptRepository;
+import com.medical.assistant.repository.MedicalSummaryRepository;
+import com.medical.assistant.repository.VisitRepository;
 import com.medical.assistant.service.TranscriptionService;
+import com.medical.assistant.service.DifyService;
 import com.medical.assistant.util.SignatureUtil;
 import com.medical.assistant.websocket.XunfeiWebSocketClient;
 import com.medical.assistant.websocket.XunfeiWebSocketHandler;
@@ -13,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.net.URI;
 import java.util.*;
@@ -35,20 +41,23 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     private XunfeiConfig xunfeiConfig;
 
     @Autowired
-    private TranscriptionRepository transcriptionRepository;
+    private TranscriptRepository transcriptRepository;
+
+    @Autowired
+    private MedicalSummaryRepository medicalSummaryRepository;
+
+    @Autowired
+    private DifyService difyService;
+
+    @Autowired
+    private VisitRepository visitRepository;
 
     // 存储活动的WebSocket连接
     private final Map<String, XunfeiWebSocketClient> activeClients = new ConcurrentHashMap<>();
 
     @Override
     public TranscriptionResponse transcribeAudio(TranscriptionRequest request) throws Exception {
-        logger.info("【开始转写】用户ID: {}", request.getUserId());
-
-        // 创建转写记录
-        Transcript record = createTranscriptionRecord(request);
-        record.setStatus("PROCESSING");
-        record = transcriptionRepository.save(record);
-        final Long recordId = record.getId();
+        logger.info("【开始转写】用户ID: {}, visitId: {}", request.getUserId(), request.getVisitId());
 
         // 构建WebSocket参数
         Map<String, String> params = buildWebSocketParams(request);
@@ -64,6 +73,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
 
         // 用于同步的变量
         final String[] sessionId = {null};
+        final String[] finalTranscriptText = {""};
         final Exception[] error = {null};
         final AtomicBoolean handshakeComplete = new AtomicBoolean(false);
         final CountDownLatch completeLatch = new CountDownLatch(1);
@@ -80,17 +90,6 @@ public class TranscriptionServiceImpl implements TranscriptionService {
                 sessionId[0] = sid;
                 handshakeComplete.set(true);
                 logger.info("【WebSocket】握手成功，SessionID: {}", sid);
-
-                // 更新记录的sessionId
-                try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
-                    if (updateRecord != null) {
-                        updateRecord.setSessionId(sid);
-                        transcriptionRepository.save(updateRecord);
-                    }
-                } catch (Exception e) {
-                    logger.error("更新sessionId失败", e);
-                }
             }
 
             @Override
@@ -101,20 +100,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             @Override
             public void onTranscriptionComplete(String fullText) {
                 logger.info("【转写完成】文本长度: {}", fullText.length());
-
-                // 保存到数据库
-                try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
-                    if (updateRecord != null) {
-                        updateRecord.setTranscriptionText(fullText);
-                        updateRecord.setStatus("COMPLETED");
-                        transcriptionRepository.save(updateRecord);
-                        logger.info("【数据库】转写结果已保存，记录ID: {}", recordId);
-                    }
-                } catch (Exception e) {
-                    logger.error("保存转写结果失败", e);
-                }
-
+                finalTranscriptText[0] = fullText;
                 completeLatch.countDown();
             }
 
@@ -122,19 +108,6 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             public void onError(Exception e) {
                 error[0] = e;
                 logger.error("【转写错误】{}", e.getMessage());
-
-                // 更新记录状态
-                try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
-                    if (updateRecord != null) {
-                        updateRecord.setStatus("FAILED");
-                        updateRecord.setErrorMessage(e.getMessage());
-                        transcriptionRepository.save(updateRecord);
-                    }
-                } catch (Exception ex) {
-                    logger.error("更新错误状态失败", ex);
-                }
-
                 completeLatch.countDown();
             }
 
@@ -191,9 +164,25 @@ public class TranscriptionServiceImpl implements TranscriptionService {
                 throw error[0];
             }
 
-            // 返回结果
+            // 获取转写结果
             String fullText = client.getFullTranscription();
-            return TranscriptionResponse.success(sessionId[0], fullText, recordId);
+
+            // 如果有visitId，保存转录结果到transcripts表
+            if (request.getVisitId() != null && !request.getVisitId().isEmpty()) {
+                // 计算音频时长
+                int audioDuration = audioData.length / (request.getSampleRate() * 2); // 16bit=2字节
+
+                Transcript transcript = saveTranscript(
+                        request.getVisitId(),
+                        fullText,
+                        audioDuration,
+                        request.getAudioEncode()
+                );
+                logger.info("【数据库】转录结果已保存到transcripts表，ID: {}", transcript.getTranscriptId());
+            }
+
+            // 返回响应
+            return TranscriptionResponse.success(sessionId[0], fullText, null);
 
         } finally {
             // 确保关闭连接
@@ -264,269 +253,6 @@ public class TranscriptionServiceImpl implements TranscriptionService {
         }
 
         logger.info("【发送完成】所有音频帧发送完毕（共{}帧）", frameIndex);
-    }
-
-    /**
-     * 构建WebSocket参数
-     */
-    private Map<String, String> buildWebSocketParams(TranscriptionRequest request) {
-        Map<String, String> params = new HashMap<>();
-
-        // 音频编码
-        params.put("audio_encode", request.getAudioEncode());
-
-        // 采样率（仅pcm格式需要）
-        if ("pcm_s16le".equals(request.getAudioEncode())) {
-            params.put("samplerate", String.valueOf(request.getSampleRate()));
-        }
-
-        // 语言
-        params.put("lang", request.getLang());
-
-        // 说话人分离
-        if (request.getRoleType() != null && request.getRoleType() > 0) {
-            params.put("role_type", String.valueOf(request.getRoleType()));
-        }
-
-        // 领域参数（医疗）
-        if (request.getPd() != null && !request.getPd().isEmpty()) {
-            params.put("pd", request.getPd());
-        }
-
-        // 标点控制
-        if (request.getEngPunc() != null) {
-            params.put("eng_punc", String.valueOf(request.getEngPunc()));
-        }
-
-        // VAD远近场
-        if (request.getEngVadMdn() != null) {
-            params.put("eng_vad_mdn", String.valueOf(request.getEngVadMdn()));
-        }
-
-        return params;
-    }
-
-    /**
-     * 创建转写记录
-     */
-    private Transcript createTranscriptionRecord(TranscriptionRequest request) {
-        Transcript record = new Transcript();
-        record.setSessionId(UUID.randomUUID().toString()); // 临时ID
-        record.setUserId(request.getUserId());
-        record.setAudioFormat(request.getAudioEncode());
-        record.setSampleRate(request.getSampleRate());
-        record.setLanguage(request.getLang());
-        record.setStatus("CREATED");
-
-        // 计算音频时长（秒）
-        if (request.getAudioData() != null && request.getSampleRate() != null) {
-            int duration = request.getAudioData().length / (request.getSampleRate() * 2); // 16bit=2字节
-            record.setAudioDuration(duration);
-        }
-
-        return record;
-    }
-
-    // ============ 流式转写方法 ============
-
-    @Override
-    public String startStreamTranscription(TranscriptionRequest request) throws Exception {
-        logger.info("【流式转写】开始，用户ID: {}", request.getUserId());
-
-        // 创建转写记录
-        Transcript record = createTranscriptionRecord(request);
-        record.setStatus("PROCESSING");
-        record = transcriptionRepository.save(record);
-        final Long recordId = record.getId();
-        final String tempSessionId = record.getSessionId();
-
-        // 构建WebSocket参数
-        Map<String, String> params = buildWebSocketParams(request);
-
-        // 生成WebSocket URL
-        String wsUrl = SignatureUtil.generateWebSocketUrl(
-                xunfeiConfig.getWebsocketUrl(),
-                xunfeiConfig.getAppId(),
-                xunfeiConfig.getApiKey(),
-                xunfeiConfig.getApiSecret(),
-                params
-        );
-
-        // 创建WebSocket处理器
-        XunfeiWebSocketHandler handler = new XunfeiWebSocketHandler() {
-            @Override
-            public void onConnected() {
-                logger.info("【流式WebSocket】连接成功");
-            }
-
-            @Override
-            public void onHandshakeSuccess(String sid) {
-                logger.info("【流式WebSocket】握手成功，SessionID: {}", sid);
-                try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
-                    if (updateRecord != null) {
-                        updateRecord.setSessionId(sid);
-                        transcriptionRepository.save(updateRecord);
-                    }
-                } catch (Exception e) {
-                    logger.error("更新sessionId失败", e);
-                }
-            }
-
-            @Override
-            public void onTranscriptionResult(String text, boolean isFinal) {
-                logger.debug("【流式结果】{} (确定性: {})", text, isFinal);
-            }
-
-            @Override
-            public void onTranscriptionComplete(String fullText) {
-                logger.info("【流式完成】文本长度: {}", fullText.length());
-                try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
-                    if (updateRecord != null) {
-                        updateRecord.setTranscriptionText(fullText);
-                        updateRecord.setStatus("COMPLETED");
-                        transcriptionRepository.save(updateRecord);
-                    }
-                } catch (Exception e) {
-                    logger.error("保存转写结果失败", e);
-                }
-            }
-
-            @Override
-            public void onError(Exception e) {
-                logger.error("【流式错误】{}", e.getMessage());
-                try {
-                    Transcript updateRecord = transcriptionRepository.findById(recordId).orElse(null);
-                    if (updateRecord != null) {
-                        updateRecord.setStatus("FAILED");
-                        updateRecord.setErrorMessage(e.getMessage());
-                        transcriptionRepository.save(updateRecord);
-                    }
-                } catch (Exception ex) {
-                    logger.error("更新错误状态失败", ex);
-                }
-            }
-
-            @Override
-            public void onClosed(int code, String reason) {
-                logger.info("【流式WebSocket】连接关闭");
-                activeClients.remove(tempSessionId);
-            }
-        };
-
-        // 创建并连接WebSocket客户端
-        XunfeiWebSocketClient client = new XunfeiWebSocketClient(new URI(wsUrl), handler);
-
-        boolean connected = client.connectBlocking(15, TimeUnit.SECONDS);
-        if (!connected) {
-            throw new Exception("WebSocket连接超时");
-        }
-
-        // 等待服务端就绪
-        Thread.sleep(SERVER_READY_WAIT_MS);
-
-        // 保存客户端
-        activeClients.put(tempSessionId, client);
-
-        return tempSessionId;
-    }
-
-    @Override
-    public void sendAudioStream(String sessionId, byte[] audioData) throws Exception {
-        XunfeiWebSocketClient client = activeClients.get(sessionId);
-        if (client == null) {
-            throw new Exception("未找到对应的WebSocket连接: " + sessionId);
-        }
-
-        if (!client.isConnected() || !client.isOpen()) {
-            throw new Exception("WebSocket连接已关闭");
-        }
-
-        // 直接发送音频数据
-        client.sendAudioFrame(audioData);
-    }
-
-    @Override
-    public TranscriptionResponse endStreamTranscription(String sessionId) throws Exception {
-        XunfeiWebSocketClient client = activeClients.get(sessionId);
-        if (client == null) {
-            throw new Exception("未找到对应的WebSocket连接: " + sessionId);
-        }
-
-        // 发送结束标记
-        client.sendEndFlag();
-
-        // 等待转写完成
-        boolean closed = client.awaitClose(30, TimeUnit.SECONDS);
-        if (!closed) {
-            logger.warn("等待转写完成超时");
-        }
-
-        // 获取结果
-        String fullText = client.getFullTranscription();
-
-        // 移除客户端
-        activeClients.remove(sessionId);
-
-        // 查询数据库记录
-        Transcript record = transcriptionRepository.findBySessionId(sessionId).orElse(null);
-        Long recordId = record != null ? record.getId() : null;
-
-        return TranscriptionResponse.success(sessionId, fullText, recordId);
-    }
-
-    @Override
-    public Transcript getTranscriptionBySessionId(String sessionId) {
-        return transcriptionRepository.findBySessionId(sessionId).orElse(null);
-    }
-
-    @Override
-    public List<Transcript> getTranscriptionsByUserId(String userId) {
-        return transcriptionRepository.findByUserId(userId);
-    }
-
-    @Override
-    public Transcript saveTranscriptionRecord(Transcript record) {
-        return transcriptionRepository.save(record);
-    }
-
-    // 在TranscriptionServiceImpl类中添加以下内容
-
-    @Autowired
-    private TranscriptRepository transcriptRepository;
-
-    @Autowired
-    private MedicalSummaryRepository medicalSummaryRepository;
-
-    @Autowired
-    private DifyService difyService;
-
-    @Autowired
-    private VisitRepository visitRepository;
-
-    // 修改原有的transcribeAudio方法，添加保存到transcripts表的逻辑
-    @Override
-    public TranscriptionResponse transcribeAudio(TranscriptionRequest request) throws Exception {
-        logger.info("【开始转写】用户ID: {}", request.getUserId());
-
-        // ... 原有代码保持不变，直到获得转写结果 ...
-
-        // 在返回结果前，保存到transcripts表
-        String fullText = client.getFullTranscription();
-
-        // 如果有visitId，保存转录结果
-        if (request.getVisitId() != null) {
-            Transcript transcript = saveTranscript(
-                    request.getVisitId(),
-                    fullText,
-                    record.getAudioDuration(),
-                    request.getAudioEncode()
-            );
-            logger.info("【数据库】转录结果已保存到transcripts表，ID: {}", transcript.getTranscriptId());
-        }
-
-        return TranscriptionResponse.success(sessionId[0], fullText, recordId);
     }
 
     @Override
@@ -608,4 +334,180 @@ public class TranscriptionServiceImpl implements TranscriptionService {
         }
     }
 
+    @Override
+    public String startStreamTranscription(TranscriptionRequest request) throws Exception {
+        logger.info("【流式转写】开始，用户ID: {}", request.getUserId());
+
+        // 生成临时sessionId
+        String tempSessionId = UUID.randomUUID().toString();
+
+        // 构建WebSocket参数
+        Map<String, String> params = buildWebSocketParams(request);
+
+        // 生成WebSocket URL
+        String wsUrl = SignatureUtil.generateWebSocketUrl(
+                xunfeiConfig.getWebsocketUrl(),
+                xunfeiConfig.getAppId(),
+                xunfeiConfig.getApiKey(),
+                xunfeiConfig.getApiSecret(),
+                params
+        );
+
+        // 创建WebSocket处理器
+        XunfeiWebSocketHandler handler = new XunfeiWebSocketHandler() {
+            @Override
+            public void onConnected() {
+                logger.info("【流式WebSocket】连接成功");
+            }
+
+            @Override
+            public void onHandshakeSuccess(String sid) {
+                logger.info("【流式WebSocket】握手成功，SessionID: {}", sid);
+            }
+
+            @Override
+            public void onTranscriptionResult(String text, boolean isFinal) {
+                logger.debug("【流式结果】{} (确定性: {})", text, isFinal);
+            }
+
+            @Override
+            public void onTranscriptionComplete(String fullText) {
+                logger.info("【流式完成】文本长度: {}", fullText.length());
+                // 如果有visitId，保存转录结果
+                if (request.getVisitId() != null && !request.getVisitId().isEmpty()) {
+                    try {
+                        saveTranscript(request.getVisitId(), fullText, null, request.getAudioEncode());
+                    } catch (Exception e) {
+                        logger.error("保存流式转录结果失败", e);
+                    }
+                }
+            }
+
+            @Override
+            public void onError(Exception e) {
+                logger.error("【流式错误】{}", e.getMessage());
+            }
+
+            @Override
+            public void onClosed(int code, String reason) {
+                logger.info("【流式WebSocket】连接关闭");
+                activeClients.remove(tempSessionId);
+            }
+        };
+
+        // 创建并连接WebSocket客户端
+        XunfeiWebSocketClient client = new XunfeiWebSocketClient(new URI(wsUrl), handler);
+
+        boolean connected = client.connectBlocking(15, TimeUnit.SECONDS);
+        if (!connected) {
+            throw new Exception("WebSocket连接超时");
+        }
+
+        // 等待服务端就绪
+        Thread.sleep(SERVER_READY_WAIT_MS);
+
+        // 保存客户端
+        activeClients.put(tempSessionId, client);
+
+        return tempSessionId;
+    }
+
+    @Override
+    public void sendAudioStream(String sessionId, byte[] audioData) throws Exception {
+        XunfeiWebSocketClient client = activeClients.get(sessionId);
+        if (client == null) {
+            throw new Exception("未找到对应的WebSocket连接: " + sessionId);
+        }
+
+        if (!client.isConnected() || !client.isOpen()) {
+            throw new Exception("WebSocket连接已关闭");
+        }
+
+        // 直接发送音频数据
+        client.sendAudioFrame(audioData);
+    }
+
+    @Override
+    public TranscriptionResponse endStreamTranscription(String sessionId) throws Exception {
+        XunfeiWebSocketClient client = activeClients.get(sessionId);
+        if (client == null) {
+            throw new Exception("未找到对应的WebSocket连接: " + sessionId);
+        }
+
+        // 发送结束标记
+        client.sendEndFlag();
+
+        // 等待转写完成
+        boolean closed = client.awaitClose(30, TimeUnit.SECONDS);
+        if (!closed) {
+            logger.warn("等待转写完成超时");
+        }
+
+        // 获取结果
+        String fullText = client.getFullTranscription();
+
+        // 移除客户端
+        activeClients.remove(sessionId);
+
+        return TranscriptionResponse.success(sessionId, fullText, null);
+    }
+
+    @Override
+    public Transcript getTranscriptionBySessionId(String sessionId) {
+        // 这个方法可能需要调整，因为Transcript表使用的是transcriptId而不是sessionId
+        // 可以通过visitId查询
+        return null; // 暂时返回null，根据实际需求实现
+    }
+
+    @Override
+    public List<Transcript> getTranscriptionsByUserId(String userId) {
+        // 需要通过visits表关联查询
+        // 这里需要根据实际需求实现
+        return new ArrayList<>();
+    }
+
+    @Override
+    public Transcript saveTranscriptionRecord(Transcript record) {
+        return transcriptRepository.save(record);
+    }
+
+    /**
+     * 构建WebSocket参数
+     */
+    private Map<String, String> buildWebSocketParams(TranscriptionRequest request) {
+        Map<String, String> params = new HashMap<>();
+
+        // 音频编码
+        params.put("audio_encode", request.getAudioEncode());
+
+        // 采样率（仅pcm格式需要）
+        if ("pcm_s16le".equals(request.getAudioEncode())) {
+            params.put("samplerate", String.valueOf(request.getSampleRate()));
+        }
+
+        // 语言
+        params.put("lang", request.getLang());
+
+        // 说话人分离
+        if (request.getRoleType() != null && request.getRoleType() > 0) {
+            params.put("role_type", String.valueOf(request.getRoleType()));
+        }
+
+        // 领域参数
+        if (request.getPd() != null && !request.getPd().isEmpty()) {
+            params.put("pd", request.getPd());
+        }
+
+        // 标点控制
+        if (request.getEngPunc() != null) {
+            params.put("eng_punc", String.valueOf(request.getEngPunc()));
+        }
+
+        // VAD远近场
+        if (request.getEngVadMdn() != null) {
+            params.put("eng_vad_mdn", String.valueOf(request.getEngVadMdn()));
+        }
+
+        return params;
+    }
 }
