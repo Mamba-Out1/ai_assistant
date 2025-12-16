@@ -1,5 +1,6 @@
 package com.medical.assistant.util;
 
+import org.apache.commons.codec.binary.Base64;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -7,9 +8,12 @@ import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.text.SimpleDateFormat;
-import java.util.*;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Map;
+import java.util.TreeMap;
 
 public class SignatureUtil {
 
@@ -20,33 +24,52 @@ public class SignatureUtil {
      * 生成讯飞WebSocket连接URL
      */
     public static String generateWebSocketUrl(String baseUrl, String appId, String apiKey,
-                                              String apiSecret, Map<String, String> businessParams) {
+                                              String apiSecret, Map<String, String> params) {
         try {
-            // 使用TreeMap保证字典序排序
-            TreeMap<String, String> params = new TreeMap<>();
+            // 添加基础参数
+            TreeMap<String, String> allParams = new TreeMap<>();
+            allParams.put("appId", appId);
+            allParams.put("accessKeyId", apiKey);
+
+            // 生成UTC时间
+            String utc = generateUtcTime();
+            allParams.put("utc", utc);
 
             // 添加业务参数
-            if (businessParams != null) {
-                params.putAll(businessParams);
+            if (params != null) {
+                allParams.putAll(params);
             }
 
-            // 添加鉴权参数
-            params.put("accessKeyId", apiKey);
-            params.put("appId", appId);
-            params.put("uuid", UUID.randomUUID().toString().replace("-", ""));
-            params.put("utc", getUtcTime());
+            // 生成baseString
+            String baseString = generateBaseString(allParams);
+            logger.debug("BaseString: {}", baseString);
 
-            // 计算签名（不包含signature参数）
-            String signature = calculateSignature(params, apiSecret);
-            params.put("signature", signature);
+            // 生成签名
+            String signature = generateSignature(baseString, apiSecret);
+            logger.debug("Signature: {}", signature);
+
+            // 添加签名到参数
+            allParams.put("signature", signature);
 
             // 构建URL
-            String paramsStr = buildParamsString(params);
-            String fullUrl = baseUrl + "?" + paramsStr;
+            StringBuilder urlBuilder = new StringBuilder(baseUrl);
+            urlBuilder.append("?");
 
-            logger.info("【连接信息】完整URL：{}", fullUrl);
+            boolean first = true;
+            for (Map.Entry<String, String> entry : allParams.entrySet()) {
+                if (!first) {
+                    urlBuilder.append("&");
+                }
+                urlBuilder.append(urlEncode(entry.getKey()))
+                        .append("=")
+                        .append(urlEncode(entry.getValue()));
+                first = false;
+            }
 
-            return fullUrl;
+            String finalUrl = urlBuilder.toString();
+            logger.debug("Final WebSocket URL: {}", finalUrl);
+
+            return finalUrl;
 
         } catch (Exception e) {
             logger.error("生成WebSocket URL失败", e);
@@ -55,82 +78,60 @@ public class SignatureUtil {
     }
 
     /**
-     * 生成UTC时间字符串（yyyy-MM-dd'T'HH:mm:ss+0800）
+     * 生成UTC时间字符串
      */
-    private static String getUtcTime() {
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ");
-        sdf.setTimeZone(TimeZone.getTimeZone("GMT+8"));
-        return sdf.format(new Date());
+    private static String generateUtcTime() {
+        ZonedDateTime now = ZonedDateTime.now();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ");
+        return now.format(formatter);
     }
 
     /**
-     * 计算HMAC-SHA1签名
+     * 生成baseString（参数按字母顺序排序并拼接）
      */
-    private static String calculateSignature(TreeMap<String, String> params, String apiSecret) {
-        try {
-            // 构建基础字符串
-            StringBuilder baseStr = new StringBuilder();
-            boolean first = true;
-
-            for (Map.Entry<String, String> entry : params.entrySet()) {
-                String key = entry.getKey();
-                String value = entry.getValue();
-
-                // 跳过signature参数
-                if ("signature".equals(key)) continue;
-
-                // 过滤空值
-                if (value == null || value.trim().isEmpty()) continue;
-
-                if (!first) {
-                    baseStr.append("&");
-                }
-
-                baseStr.append(URLEncoder.encode(key, StandardCharsets.UTF_8.name()))
-                        .append("=")
-                        .append(URLEncoder.encode(value, StandardCharsets.UTF_8.name()));
-                first = false;
-            }
-
-            logger.debug("签名基础字符串: {}", baseStr.toString());
-
-            // HMAC-SHA1计算
-            Mac mac = Mac.getInstance(HMAC_SHA1_ALGORITHM);
-            SecretKeySpec keySpec = new SecretKeySpec(
-                    apiSecret.getBytes(StandardCharsets.UTF_8), HMAC_SHA1_ALGORITHM);
-            mac.init(keySpec);
-            byte[] signBytes = mac.doFinal(baseStr.toString().getBytes(StandardCharsets.UTF_8));
-
-            // Base64编码
-            return Base64.getEncoder().encodeToString(signBytes);
-
-        } catch (Exception e) {
-            throw new RuntimeException("计算签名失败", e);
-        }
-    }
-
-    /**
-     * 构建参数字符串
-     */
-    private static String buildParamsString(Map<String, String> params) {
-        StringBuilder sb = new StringBuilder();
+    private static String generateBaseString(TreeMap<String, String> params) {
+        StringBuilder baseString = new StringBuilder();
         boolean first = true;
 
         for (Map.Entry<String, String> entry : params.entrySet()) {
             if (!first) {
-                sb.append("&");
+                baseString.append("&");
             }
-            try {
-                sb.append(URLEncoder.encode(entry.getKey(), StandardCharsets.UTF_8.name()))
-                        .append("=")
-                        .append(URLEncoder.encode(entry.getValue(), StandardCharsets.UTF_8.name()));
-            } catch (UnsupportedEncodingException e) {
-                // UTF-8编码总是支持的
-                e.printStackTrace();
-            }
+            baseString.append(urlEncode(entry.getKey()))
+                    .append("=")
+                    .append(urlEncode(entry.getValue()));
             first = false;
         }
 
-        return sb.toString();
+        return baseString.toString();
+    }
+
+    /**
+     * 使用HmacSHA1算法生成签名
+     */
+    private static String generateSignature(String baseString, String apiSecret)
+            throws NoSuchAlgorithmException, InvalidKeyException, UnsupportedEncodingException {
+
+        Mac mac = Mac.getInstance(HMAC_SHA1_ALGORITHM);
+        SecretKeySpec secretKeySpec = new SecretKeySpec(
+                apiSecret.getBytes("UTF-8"), HMAC_SHA1_ALGORITHM);
+        mac.init(secretKeySpec);
+
+        byte[] rawHmac = mac.doFinal(baseString.getBytes("UTF-8"));
+        return Base64.encodeBase64String(rawHmac);
+    }
+
+    /**
+     * URL编码
+     */
+    private static String urlEncode(String str) {
+        try {
+            return URLEncoder.encode(str, "UTF-8")
+                    .replace("+", "%20")
+                    .replace("*", "%2A")
+                    .replace("%7E", "~");
+        } catch (UnsupportedEncodingException e) {
+            throw new RuntimeException("URL编码失败", e);
+        }
     }
 }
