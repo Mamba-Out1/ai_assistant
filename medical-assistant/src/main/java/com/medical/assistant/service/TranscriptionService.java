@@ -11,7 +11,7 @@ import java.util.List;
 public interface TranscriptionService {
 
     /**
-     * 实时语音转
+     * 实时语音转写
      */
     TranscriptionResponse transcribeAudio(TranscriptionRequest request) throws Exception;
 
@@ -31,7 +31,7 @@ public interface TranscriptionService {
     TranscriptionResponse endStreamTranscription(String sessionId) throws Exception;
 
     /**
-     * 根据sessionId查询转写记录
+     * 根据sessionId查询转写记录（可能需要调整）
      */
     Transcript getTranscriptionBySessionId(String sessionId);
 
@@ -41,7 +41,7 @@ public interface TranscriptionService {
     List<Transcript> getTranscriptionsByUserId(String userId);
 
     /**
-     * 保存转写记录到数据库
+     * 保存转写记录
      */
     Transcript saveTranscriptionRecord(Transcript record);
 
