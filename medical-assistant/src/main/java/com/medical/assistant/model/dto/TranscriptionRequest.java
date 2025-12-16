@@ -25,4 +25,6 @@ public class TranscriptionRequest {
     private Integer engPunc = 1; // 是否返回标点
 
     private Integer engVadMdn = 1; // vad远近场切换
+
+    private String visitId;
 }

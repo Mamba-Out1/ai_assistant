@@ -2,14 +2,16 @@ package com.medical.assistant.service;
 
 import com.medical.assistant.model.dto.TranscriptionRequest;
 import com.medical.assistant.model.dto.TranscriptionResponse;
-import com.medical.assistant.model.entity.TranscriptionRecord;
+import com.medical.assistant.model.dto.MedicalSummaryDto;
+import com.medical.assistant.model.entity.Transcript;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 
 public interface TranscriptionService {
 
     /**
-     * 实时语音转写
+     * 实时语音转
      */
     TranscriptionResponse transcribeAudio(TranscriptionRequest request) throws Exception;
 
@@ -31,15 +33,30 @@ public interface TranscriptionService {
     /**
      * 根据sessionId查询转写记录
      */
-    TranscriptionRecord getTranscriptionBySessionId(String sessionId);
+    Transcript getTranscriptionBySessionId(String sessionId);
 
     /**
      * 根据用户ID查询转写记录
      */
-    List<TranscriptionRecord> getTranscriptionsByUserId(String userId);
+    List<Transcript> getTranscriptionsByUserId(String userId);
 
     /**
      * 保存转写记录到数据库
      */
-    TranscriptionRecord saveTranscriptionRecord(TranscriptionRecord record);
+    Transcript saveTranscriptionRecord(Transcript record);
+
+    /**
+     * 保存转录结果到transcripts表
+     */
+    Transcript saveTranscript(String visitId, String transcriptText, Integer audioDuration, String audioFormat);
+
+    /**
+     * 调用智能体生成病历总结（流式）
+     */
+    Flux<String> generateMedicalSummaryStream(String visitId, String transcriptText, String doctorId, String patientId);
+
+    /**
+     * 保存病历总结
+     */
+    void saveMedicalSummary(MedicalSummaryDto summaryDto);
 }
