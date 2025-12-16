@@ -1,0 +1,38 @@
+spring:
+  application:
+    name: medical-assistant
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/medical_assistant?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+        format_sql: true
+server:
+  port: 8080
+
+# 讯飞配置
+xunfei:
+  app-id: 17ac440e
+  api-key: 9250f50673266918ba3d515e25a44f0b
+  api-secret: NTdmMTUxOGRhOTgxMWIzZDA2MGVlMWEy
+  websocket-url: wss://office-api-ast-dx.iflyaisol.com/ast/communicate/v1
+
+  # 默认音频参数
+  audio:
+    encode: pcm_s16le
+    sample-rate: 16000
+    lang: autodialect
+
+logging:
+  level:
+    com.medical.assistant: DEBUG
+    org.springframework.web: INFO
