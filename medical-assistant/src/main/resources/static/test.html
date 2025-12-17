@@ -120,6 +120,7 @@
       }catch(e){ consoleLog('start exception '+e.message); alert('启动异常: '+e.message) }
     })
 
+    // 分块发送选中文件（保持原有功能）
     $('sendStreamBtn').addEventListener('click', async ()=>{
       if(!currentSession){ alert('请先启动会话'); return }
       const file = $('fileInput').files[0]; if(!file){ alert('请选择要发送的音频文件'); return }
@@ -139,6 +140,115 @@
       consoleLog('分块发送完成');
     })
 
+    // --- 浏览器麦克风实时分帧发送 ---
+    let micStream = null;
+    let micAudioContext = null;
+    let micProcessor = null;
+    let micSampleBuffer = new Int16Array(0);
+    let micSendQueue = [];
+    let micSenderRunning = false;
+
+    function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+    function floatTo16BitPCM(float32Array){
+      const l = float32Array.length; const out = new Int16Array(l);
+      for(let i=0;i<l;i++){ let s=Math.max(-1,Math.min(1,float32Array[i])); out[i] = s<0 ? s*0x8000 : s*0x7FFF }
+      return out;
+    }
+
+    function downsampleBuffer(buffer, srcRate, dstRate){
+      if(dstRate === srcRate) return buffer;
+      const sampleRateRatio = srcRate / dstRate;
+      const newLength = Math.round(buffer.length / sampleRateRatio);
+      const result = new Float32Array(newLength);
+      let offsetResult = 0;
+      let offsetBuffer = 0;
+      while(offsetResult < newLength){
+        const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+        // average the range [offsetBuffer, nextOffsetBuffer)
+        let accum = 0, count = 0;
+        for(let i=offsetBuffer;i<nextOffsetBuffer && i<buffer.length;i++){ accum += buffer[i]; count++ }
+        result[offsetResult] = count > 0 ? accum / count : 0;
+        offsetResult++;
+        offsetBuffer = nextOffsetBuffer;
+      }
+      return result;
+    }
+
+    function appendSamplesAndEnqueue(int16Samples){
+      // concatenate
+      const tmp = new Int16Array(micSampleBuffer.length + int16Samples.length);
+      tmp.set(micSampleBuffer,0); tmp.set(int16Samples, micSampleBuffer.length); micSampleBuffer = tmp;
+      const frameSizeBytes = parseInt($('frameSize').value || '1280');
+      const samplesPerFrame = Math.floor(frameSizeBytes / 2);
+      while(micSampleBuffer.length >= samplesPerFrame){
+        const frame = micSampleBuffer.subarray(0, samplesPerFrame);
+        micSendQueue.push(frame.buffer.slice(frame.byteOffset, frame.byteOffset + frame.byteLength));
+        micSampleBuffer = micSampleBuffer.subarray(samplesPerFrame);
+      }
+      if(!micSenderRunning){ startMicSender(); }
+    }
+
+    async function startMicSender(){
+      micSenderRunning = true;
+      const frameInterval = parseInt($('frameInterval').value || '40');
+      while(micSendQueue.length > 0){
+        const buf = micSendQueue.shift();
+        try{
+          await fetch(`/api/transcription/stream/send/${encodeURIComponent(currentSession)}`, {method:'POST', headers:{'Content-Type':'application/octet-stream'}, body: buf});
+        }catch(e){ consoleLog('麦克风发送错误: ' + e.message); }
+        await sleep(frameInterval);
+      }
+      micSenderRunning = false;
+    }
+
+    async function startMicStream(){
+      if(!currentSession){ // auto-start session if needed
+        $('startStreamBtn').click();
+        // small wait for session to be created
+        let attempts = 0;
+        while(!currentSession && attempts++ < 20){ await sleep(200); }
+        if(!currentSession){ alert('无法创建stream session，请检查后端'); return }
+      }
+
+      if(micStream) { consoleLog('麦克风已在运行'); return }
+      try{
+        micStream = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1}});
+        micAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = micAudioContext.createMediaStreamSource(micStream);
+        micProcessor = micAudioContext.createScriptProcessor(4096,1,1);
+        micProcessor.onaudioprocess = (e) => {
+          const input = e.inputBuffer.getChannelData(0);
+          let float32 = input;
+          if(micAudioContext.sampleRate !== 16000){ float32 = downsampleBuffer(input, micAudioContext.sampleRate, 16000); }
+          const int16 = floatTo16BitPCM(float32);
+          appendSamplesAndEnqueue(int16);
+        };
+        source.connect(micProcessor); micProcessor.connect(micAudioContext.destination);
+        consoleLog('麦克风采样已开始，session=' + currentSession);
+      }catch(e){ consoleLog('启用麦克风失败: ' + e.message); alert('启用麦克风失败: '+e.message); }
+    }
+
+    function stopMicStream(){
+      if(micProcessor){ try{ micProcessor.disconnect(); }catch(e){} micProcessor = null }
+      if(micAudioContext){ try{ micAudioContext.close(); }catch(e){} micAudioContext = null }
+      if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream = null }
+      micSampleBuffer = new Int16Array(0); micSendQueue = [];
+      consoleLog('麦克风采样已停止');
+    }
+
+    // 新增按钮（通过事件代理在DOM已创建的情况下绑定）
+    // 动态添加 Start/Stop Mic 按钮右在 stream 按钮前后
+    const sBtn = document.createElement('button'); sBtn.id='startMicBtn'; sBtn.textContent='开始麦克风流';
+    const tBtn = document.createElement('button'); tBtn.id='stopMicBtn'; tBtn.textContent='停止麦克风流'; tBtn.className='secondary';
+    const container = $('startStreamBtn').parentNode; container.insertBefore(sBtn, $('sendStreamBtn'));
+    container.insertBefore(tBtn, $('endStreamBtn'));
+
+    document.addEventListener('click', (e)=>{
+      if(e.target && e.target.id === 'startMicBtn'){ startMicStream(); }
+      if(e.target && e.target.id === 'stopMicBtn'){ stopMicStream(); }
+    });
+
     $('endStreamBtn').addEventListener('click', async ()=>{
       if(!currentSession){ alert('没有活动会话'); return }
       consoleLog('POST /api/transcription/stream/end/' + currentSession);
@@ -148,6 +258,8 @@
         consoleLog('结束会话响应: ' + JSON.stringify(json));
         $('transcriptionOutput').textContent = json.transcriptionText || JSON.stringify(json, null, 2);
         currentSession = null; $('sessionLabel').textContent='';
+        // stop mic if running
+        stopMicStream();
       }catch(e){ consoleLog('end exception ' + e.message); alert('结束异常: '+e.message) }
     })
 
