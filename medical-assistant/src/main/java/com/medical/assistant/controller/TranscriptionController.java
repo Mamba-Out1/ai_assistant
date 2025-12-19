@@ -26,6 +26,9 @@ public class TranscriptionController {
 
     @Autowired
     private TranscriptionService transcriptionService;
+    
+    @Autowired
+    private com.medical.assistant.repository.TranscriptRepository transcriptRepository;
 
     /**
      * 上传音频文件进行转写
@@ -160,6 +163,25 @@ public class TranscriptionController {
 
         } catch (Exception e) {
             logger.error("查询转写记录失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * 根据visitId查询转录记录
+     */
+    @GetMapping("/visit/{visitId}")
+    public ResponseEntity<Transcript> getTranscriptionByVisit(
+            @PathVariable String visitId) {
+
+        try {
+            // 使用repository直接查询
+            return transcriptRepository.findByVisitId(visitId)
+                    .map(ResponseEntity::ok)
+                    .orElse(ResponseEntity.notFound().build());
+
+        } catch (Exception e) {
+            logger.error("根据visitId查询转录记录失败", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
