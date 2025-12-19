@@ -7,6 +7,8 @@ import java.util.List;
 public class XunfeiResponse {
 
     private String action;  // started, result, error
+    private String msg_type; // result, error
+    private String res_type; // asr
     private String code;
     private String desc;
     private String sid;     // 会话ID
@@ -24,9 +26,9 @@ public class XunfeiResponse {
 
             @Data
             public static class StBean {
-                private String bg;   // 句子开始时间
-                private String ed;   // 句子结束时间
-                private Integer type; // 0-确定性结果；1-中间结果
+                private Integer bg;   // 句子开始时间
+                private Integer ed;   // 句子结束时间
+                private String type; // "0"-确定性结果；"1"-中间结果
                 private List<RtBean> rt;
 
                 @Data
@@ -36,15 +38,19 @@ public class XunfeiResponse {
                     @Data
                     public static class WsBean {
                         private List<CwBean> cw;
+                        private Integer wb;  // 词组开始时间
+                        private Integer we;  // 词组结束时间
 
                         @Data
                         public static class CwBean {
                             private String w;   // 词内容
                             private String wp;  // 词标识
-                            private String wb;  // 词开始时间
-                            private String we;  // 词结束时间
+                            private Integer wb;  // 词开始时间
+                            private Integer we;  // 词结束时间
                             private String lg;  // 语言类型
-                            private Integer rl; // 角色分离标识
+                            private String rl; // 角色分离标识
+                            private Double sc;  // 置信度
+                            private Double wc;  // 词置信度
                         }
                     }
                 }

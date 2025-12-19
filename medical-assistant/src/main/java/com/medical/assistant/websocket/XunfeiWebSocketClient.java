@@ -55,12 +55,13 @@ public class XunfeiWebSocketClient extends WebSocketClient {
             }
 
             String action = response.getAction();
+            String msgType = response.getMsg_type();
 
             if ("started".equals(action)) {
                 logger.info("【握手成功】服务端就绪，session ID: {}", response.getSid());
                 handler.onHandshakeSuccess(response.getSid());
 
-            } else if ("result".equals(action)) {
+            } else if ("result".equals(action) || "result".equals(msgType)) {
                 // 解析转写结果
                 String text = parseTranscriptionResult(response);
                 if (text != null && !text.isEmpty()) {
@@ -68,12 +69,14 @@ public class XunfeiWebSocketClient extends WebSocketClient {
                     boolean isFinal = false;
                     if (response.getData() != null && response.getData().getCn() != null
                             && response.getData().getCn().getSt() != null) {
-                        isFinal = response.getData().getCn().getSt().getType() == 0;
+                        String type = response.getData().getCn().getSt().getType();
+                        isFinal = "0".equals(type);
                     }
 
                     // 只有确定性结果才追加到完整文本
                     if (isFinal) {
                         fullTranscription.append(text);
+                        logger.info("【追加文本】{} (当前总长度: {})", text, fullTranscription.length());
                     }
 
                     handler.onTranscriptionResult(text, isFinal);
@@ -82,19 +85,19 @@ public class XunfeiWebSocketClient extends WebSocketClient {
 
                 // 检查是否为最后一帧
                 if (response.getData() != null && Boolean.TRUE.equals(response.getData().getLs())) {
-                    logger.info("【转写完成】收到最终结果");
+                    logger.info("【转写完成】收到最终结果，完整文本: {}", fullTranscription.toString());
                     handler.onTranscriptionComplete(fullTranscription.toString());
                 }
 
-            } else if ("error".equals(action)) {
+            } else if ("error".equals(action) || "error".equals(msgType)) {
                 logger.error("【讯飞错误】code={}, desc={}", response.getCode(), response.getDesc());
                 handler.onError(new Exception("讯飞错误: " + response.getCode() + " - " + response.getDesc()));
             }
 
         } catch (Exception e) {
             // 可能是非JSON消息
-            logger.warn("【接收异常】非JSON消息或解析失败: {}",
-                    message.length() > 100 ? message.substring(0, 100) + "..." : message);
+            logger.warn("【接收异常】非JSON消息或解析失败: {}", e.getMessage());
+            logger.debug("原始消息: {}", message.length() > 200 ? message.substring(0, 200) + "..." : message);
         }
     }
 

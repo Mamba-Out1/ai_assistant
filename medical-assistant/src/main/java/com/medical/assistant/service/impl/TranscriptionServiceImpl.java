@@ -103,15 +103,18 @@ public class TranscriptionServiceImpl implements TranscriptionService {
                 synchronized (finalTranscriptText) {
                     if (isFinal) {
                         finalTranscriptText[0] += text;
+                        logger.info("【累积文本】当前长度: {}, 内容: {}", finalTranscriptText[0].length(), finalTranscriptText[0]);
                     }
                 }
             }
 
             @Override
             public void onTranscriptionComplete(String fullText) {
-                logger.info("【转写完成】文本长度: {}", fullText.length());
+                logger.info("【转写完成】文本长度: {}, 内容: {}", fullText != null ? fullText.length() : 0, fullText);
                 synchronized (finalTranscriptText) {
-                    finalTranscriptText[0] = fullText;
+                    if (fullText != null && !fullText.trim().isEmpty()) {
+                        finalTranscriptText[0] = fullText;
+                    }
                 }
                 completeLatch.countDown();
             }
@@ -181,8 +184,14 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             if (fullText == null || fullText.trim().isEmpty()) {
                 fullText = finalTranscriptText[0];
             }
+            
+            // 确保有有效的转写结果
+            if (fullText == null || fullText.trim().isEmpty()) {
+                logger.warn("【警告】未获取到有效的转写结果");
+                fullText = ""; // 设置为空字符串而不是null
+            }
 
-            logger.info("【最终结果】转写文本: {}", fullText);
+            logger.info("【最终结果】转写文本长度: {}, 内容: {}", fullText.length(), fullText);
 
             // 如果有visitId，保存转录结果到transcripts表
             if (request.getVisitId() != null && !request.getVisitId().isEmpty()) {
@@ -195,7 +204,9 @@ public class TranscriptionServiceImpl implements TranscriptionService {
                         audioDuration,
                         request.getAudioEncode()
                 );
-                logger.info("【数据库】转录结果已保存到transcripts表，ID: {}", transcript.getTranscriptId());
+                logger.info("【数据库】转录结果已保存到transcripts表，ID: {}, 文本: {}", transcript.getTranscriptId(), fullText);
+            } else {
+                logger.info("【跳过保存】无visitId，不保存到数据库");
             }
 
             // 返回响应 - 修复响应字段名
