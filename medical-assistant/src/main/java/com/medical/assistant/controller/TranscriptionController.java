@@ -34,24 +34,32 @@ public class TranscriptionController {
     public ResponseEntity<TranscriptionResponse> uploadAndTranscribe(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "userId", required = false) String userId,
+            @RequestParam(value = "visitId", required = false) String visitId,
             @RequestParam(value = "audioEncode", defaultValue = "pcm_s16le") String audioEncode,
             @RequestParam(value = "sampleRate", defaultValue = "16000") Integer sampleRate,
-            @RequestParam(value = "lang", defaultValue = "autodialect") String lang) {
+            @RequestParam(value = "lang", defaultValue = "autodialect") String lang,
+            @RequestParam(value = "pd", required = false) String pd) {
 
         try {
-            logger.info("收到音频文件上传请求，文件名: {}, 大小: {} bytes",
-                    file.getOriginalFilename(), file.getSize());
+            logger.info("收到音频文件上传请求，文件名: {}, 大小: {} bytes, visitId: {}",
+                    file.getOriginalFilename(), file.getSize(), visitId);
 
             // 构建请求
             TranscriptionRequest request = new TranscriptionRequest();
             request.setAudioData(file.getBytes());
             request.setUserId(userId);
+            request.setVisitId(visitId);
             request.setAudioEncode(audioEncode);
             request.setSampleRate(sampleRate);
             request.setLang(lang);
+            request.setPd(pd);
 
             // 执行转写
             TranscriptionResponse response = transcriptionService.transcribeAudio(request);
+            
+            logger.info("转写完成，返回结果: sessionId={}, 文本长度={}", 
+                    response.getSessionId(), 
+                    response.getTranscriptionText() != null ? response.getTranscriptionText().length() : 0);
 
             return ResponseEntity.ok(response);
 

@@ -59,6 +59,9 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     public TranscriptionResponse transcribeAudio(TranscriptionRequest request) throws Exception {
         logger.info("【开始转写】用户ID: {}, visitId: {}", request.getUserId(), request.getVisitId());
 
+        // 测试网络连接
+        testNetworkConnection();
+
         // 构建WebSocket参数
         Map<String, String> params = buildWebSocketParams(request);
 
@@ -70,6 +73,8 @@ public class TranscriptionServiceImpl implements TranscriptionService {
                 xunfeiConfig.getApiSecret(),
                 params
         );
+
+        logger.info("【连接URL】{}", wsUrl);
 
         // 用于同步的变量
         final String[] sessionId = {null};
@@ -95,12 +100,19 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             @Override
             public void onTranscriptionResult(String text, boolean isFinal) {
                 logger.debug("【转写结果】{} (确定性: {})", text, isFinal);
+                synchronized (finalTranscriptText) {
+                    if (isFinal) {
+                        finalTranscriptText[0] += text;
+                    }
+                }
             }
 
             @Override
             public void onTranscriptionComplete(String fullText) {
                 logger.info("【转写完成】文本长度: {}", fullText.length());
-                finalTranscriptText[0] = fullText;
+                synchronized (finalTranscriptText) {
+                    finalTranscriptText[0] = fullText;
+                }
                 completeLatch.countDown();
             }
 
@@ -122,11 +134,11 @@ public class TranscriptionServiceImpl implements TranscriptionService {
         XunfeiWebSocketClient client = new XunfeiWebSocketClient(new URI(wsUrl), handler);
 
         try {
-            // 1. 建立连接
+            // 1. 建立连接（带重试）
             logger.info("【步骤1】建立WebSocket连接...");
-            boolean connected = client.connectBlocking(15, TimeUnit.SECONDS);
+            boolean connected = connectWithRetry(client, 3);
             if (!connected) {
-                throw new Exception("WebSocket连接超时");
+                throw new Exception("WebSocket连接失败，已重试3次");
             }
 
             // 2. 等待服务端就绪（关键！）
@@ -166,6 +178,11 @@ public class TranscriptionServiceImpl implements TranscriptionService {
 
             // 获取转写结果
             String fullText = client.getFullTranscription();
+            if (fullText == null || fullText.trim().isEmpty()) {
+                fullText = finalTranscriptText[0];
+            }
+
+            logger.info("【最终结果】转写文本: {}", fullText);
 
             // 如果有visitId，保存转录结果到transcripts表
             if (request.getVisitId() != null && !request.getVisitId().isEmpty()) {
@@ -181,8 +198,10 @@ public class TranscriptionServiceImpl implements TranscriptionService {
                 logger.info("【数据库】转录结果已保存到transcripts表，ID: {}", transcript.getTranscriptId());
             }
 
-            // 返回响应
-            return TranscriptionResponse.success(sessionId[0], fullText, null);
+            // 返回响应 - 修复响应字段名
+            TranscriptionResponse response = TranscriptionResponse.success(sessionId[0], fullText, null);
+            logger.info("【返回响应】sessionId: {}, 文本长度: {}", sessionId[0], fullText != null ? fullText.length() : 0);
+            return response;
 
         } finally {
             // 确保关闭连接
@@ -258,6 +277,8 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     @Override
     public Transcript saveTranscript(String visitId, String transcriptText, Integer audioDuration, String audioFormat) {
         try {
+            logger.info("【数据库】开始保存转录结果，visitId: {}, 文本长度: {}", visitId, transcriptText != null ? transcriptText.length() : 0);
+            
             Transcript transcript = new Transcript();
             transcript.setTranscriptId(UUID.randomUUID().toString());
             transcript.setVisitId(visitId);
@@ -266,9 +287,11 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             transcript.setAudioFormat(audioFormat);
             transcript.setStatus(Transcript.TranscriptStatus.COMPLETED);
 
-            return transcriptRepository.save(transcript);
+            Transcript saved = transcriptRepository.save(transcript);
+            logger.info("【数据库】转录结果保存成功，ID: {}", saved.getTranscriptId());
+            return saved;
         } catch (Exception e) {
-            logger.error("保存转录结果失败", e);
+            logger.error("【数据库】保存转录结果失败", e);
             throw new RuntimeException("保存转录结果失败", e);
         }
     }
@@ -454,15 +477,11 @@ public class TranscriptionServiceImpl implements TranscriptionService {
 
     @Override
     public Transcript getTranscriptionBySessionId(String sessionId) {
-        // 这个方法可能需要调整，因为Transcript表使用的是transcriptId而不是sessionId
-        // 可以通过visitId查询
-        return null; // 暂时返回null，根据实际需求实现
+        return null;
     }
 
     @Override
     public List<Transcript> getTranscriptionsByUserId(String userId) {
-        // 需要通过visits表关联查询
-        // 这里需要根据实际需求实现
         return new ArrayList<>();
     }
 
@@ -509,5 +528,55 @@ public class TranscriptionServiceImpl implements TranscriptionService {
         }
 
         return params;
+    }
+
+    /**
+     * 测试网络连接
+     */
+    private void testNetworkConnection() throws Exception {
+        try {
+            logger.info("【网络测试】开始测试连接到讯飞服务器...");
+            
+            // 解析URL获取主机和端口
+            String host = "office-api-ast-dx.iflyaisol.com";
+            int port = 443; // HTTPS默认端口
+            
+            // 测试TCP连接
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(host, port), 10000); // 10秒超时
+                logger.info("【网络测试】TCP连接成功: {}:{}", host, port);
+            }
+            
+        } catch (Exception e) {
+            logger.error("【网络测试】连接失败: {}", e.getMessage());
+            throw new Exception("网络连接失败，请检查网络设置或防火墙配置: " + e.getMessage());
+        }
+    }
+
+    /**
+     * WebSocket连接重试
+     */
+    private boolean connectWithRetry(XunfeiWebSocketClient client, int maxRetries) {
+        for (int i = 0; i < maxRetries; i++) {
+            try {
+                logger.info("【连接重试】第{}次尝试连接...", i + 1);
+                boolean connected = client.connectBlocking(20, TimeUnit.SECONDS);
+                if (connected) {
+                    logger.info("【连接成功】第{}次尝试成功", i + 1);
+                    return true;
+                }
+            } catch (Exception e) {
+                logger.warn("【连接失败】第{}次尝试失败: {}", i + 1, e.getMessage());
+                if (i < maxRetries - 1) {
+                    try {
+                        Thread.sleep(2000); // 等待2秒再重试
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        return false;
     }
 }
