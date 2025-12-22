@@ -445,17 +445,17 @@
             const doctorId = 'doc_001';
             const patientId = 'patient_001';
             const summaryResult = document.getElementById('summaryResult');
-            
+
             if (!visitId) {
                 alert('请输入visitId');
                 return;
             }
-            
+
             summaryResult.innerHTML = '<div style="color: #007bff;">🔄 正在生成病历总结...</div>';
-            
+
             try {
                 const url = `/api/medical-summary/generate/${encodeURIComponent(visitId)}?doctorId=${encodeURIComponent(doctorId)}&patientId=${encodeURIComponent(patientId)}`;
-                
+
                 const response = await fetch(url, {
                     method: 'POST',
                     headers: {
@@ -463,29 +463,29 @@
                         'Cache-Control': 'no-cache'
                     }
                 });
-                
+
                 if (!response.ok) {
                     const errorText = await response.text();
                     console.error('后端错误响应:', errorText);
                     throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
                 }
-                
+
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
                 let summaryContent = '';
-                
+
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    
+
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
-                    
+
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
                             try {
                                 const data = JSON.parse(line.substring(6));
-                                
+
                                 if (data.event === 'completed') {
                                     summaryResult.innerHTML = `<div style="color: #28a745; font-weight: bold;">✅ 病历总结生成完成</div><div style="margin-top: 10px; white-space: pre-wrap;">${summaryContent}</div>`;
                                     return;
@@ -502,10 +502,10 @@
                         }
                     }
                 }
-                
+
             } catch (error) {
                 console.error('生成病历总结失败:', error);
-                
+
                 // 获取详细错误信息
                 let errorMessage = error.message;
                 if (error.response) {
@@ -516,7 +516,7 @@
                         // 忽略解析错误
                     }
                 }
-                
+
                 summaryResult.innerHTML = `<div style="color: #dc3545;">❌ 生成失败: ${errorMessage}</div>`;
             }
         });

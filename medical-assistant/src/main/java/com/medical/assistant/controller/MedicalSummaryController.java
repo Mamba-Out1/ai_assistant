@@ -84,7 +84,20 @@ public class MedicalSummaryController {
                     })
                     .onErrorResume(error -> {
                         log.error("【Dify API】调用失败，使用备用方案", error);
-                        return generateSimpleMedicalSummary(transcript.getTranscriptText());
+                        return generateSimpleMedicalSummary(transcript.getTranscriptText())
+                                .map(content -> {
+                                    if (content.equals("[COMPLETED]")) {
+                                        return "data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}";
+
+
+                                    } else if (content.startsWith("[ERROR]")) {
+                                        return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7) + "\"}";
+
+
+                                    } else {
+                                        return content; // 已经是SSE格式
+                                    }
+                                });
                     });
         } catch (Exception e) {
             log.error("【病历总结】生成失败", e);

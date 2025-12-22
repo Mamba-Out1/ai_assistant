@@ -22,37 +22,71 @@ public class DifyServiceImpl implements DifyService {
 
     private final WebClient webClient;
     private final ObjectMapper objectMapper;
+    // 规范化后的 API Key（不包含 Bearer 前缀）
+    private String normalizedApiKey;
 
     @Autowired
     private DifyConfig difyConfig;
 
     public DifyServiceImpl(DifyConfig difyConfig, ObjectMapper objectMapper) {
         this.objectMapper = objectMapper;
+        // 保证构造器注入的配置被赋值给字段（避免混用注入导致 field 未设置）
+        this.difyConfig = difyConfig;
+
+        String rawApiKey = difyConfig.getApiKey() == null ? "" : difyConfig.getApiKey().trim();
+        // 如果用户在配置中已经包含了 'Bearer ' 前缀，去掉以避免重复
+        this.normalizedApiKey = rawApiKey.startsWith("Bearer ") ? rawApiKey.substring(7) : rawApiKey;
+
+        if (this.normalizedApiKey.isEmpty()) {
+            log.warn("【Dify配置】未配置 api-key，Dify 调用将失败。请在配置中设置 dify.api-key 或通过环境变量覆盖。");
+        } else {
+            log.info("【Dify配置】API URL: {}, API Key: {}***", 
+                    difyConfig.getApiUrl(), 
+                    this.normalizedApiKey.substring(0, Math.min(10, this.normalizedApiKey.length())));
+        }
+
         this.webClient = WebClient.builder()
                 .baseUrl(difyConfig.getApiUrl())
-                .defaultHeader("Authorization", "Bearer " + difyConfig.getApiKey())
-                .defaultHeader("Content-Type", "application/json")
+                // 设置默认 Authorization header，确保每次请求都携带 Bearer token
+                .defaultHeader("Authorization", "Bearer " + this.normalizedApiKey)
                 .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(1024 * 1024))
                 .build();
         
-        log.info("【Dify配置】API URL: {}, API Key: {}***", 
-                difyConfig.getApiUrl(), 
-                difyConfig.getApiKey().substring(0, Math.min(10, difyConfig.getApiKey().length())));
+        log.debug("【Dify API 调试】Authorization Header: Bearer {}***", 
+                normalizedApiKey.substring(0, Math.min(10, normalizedApiKey.length())));
+
+        // 打印完整请求头（仅用于调试，生产环境请移除）
+        webClient.mutate()
+                .defaultHeader("Authorization", "Bearer " + normalizedApiKey)
+                .build();
     }
 
     @Override
     public Flux<DifyChatResponse> generateMedicalSummaryStream(String transcriptText, String userId, String conversationId) {
         log.info("【Dify API】开始调用，文本长度: {}, 用户ID: {}", transcriptText.length(), userId);
         
+        if (this.normalizedApiKey == null || this.normalizedApiKey.isEmpty()) {
+            log.error("【Dify API】未配置 API Key，停止调用 Dify。请设置 dify.api-key 或通过环境变量注入。返回友好错误响应。");
+            return Flux.just(createErrorResponse("Dify API key 未配置"));
+        }
+
         // 构建请求（严格按照Dify API文档格式）
         DifyChatRequest request = new DifyChatRequest();
-        request.setInputs(new HashMap<>()); // 空对象
+        request.setInputs(new HashMap<>()); 
         request.setQuery("请根据以下语音转录内容生成病历总结：" + transcriptText);
         request.setResponseMode("streaming");
-        request.setConversationId(""); // 空字符串而不是null
-        request.setUser(userId != null ? userId : "medical_assistant"); // 确保不为null
+        request.setConversationId(""); 
+        request.setUser(userId != null ? userId : "medical_assistant");
+        request.setFiles(null); // 不传文件
 
-        log.info("【Dify API】请求参数: {}", request);
+        try {
+            log.info("【Dify API】请求参数: query={}, user={}, responseMode={}, JSON={}", 
+                    request.getQuery().substring(0, Math.min(50, request.getQuery().length())) + "...",
+                    request.getUser(), request.getResponseMode(),
+                    objectMapper.writeValueAsString(request));
+        } catch (Exception e) {
+            log.error("序列化请求失败", e);
+        }
 
         // 调用Dify API
         return webClient.post()
@@ -70,7 +104,11 @@ public class DifyServiceImpl implements DifyService {
                             });
                     })
                 .bodyToFlux(String.class)
-                .doOnNext(data -> log.debug("【Dify API】收到数据: {}", data))
+                .timeout(java.time.Duration.ofSeconds(30))
+                .doOnSubscribe(s -> log.info("【Dify API】开始订阅响应流"))
+                .doOnNext(data -> log.info("【Dify API】收到原始数据: {}", data))
+                .doOnError(error -> log.error("【Dify API】流处理错误", error))
+                .doOnComplete(() -> log.info("【Dify API】流处理完成"))
                 .filter(data -> data.startsWith("data: "))
                 .map(data -> {
                     try {
