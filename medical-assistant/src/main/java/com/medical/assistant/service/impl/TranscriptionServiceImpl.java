@@ -432,17 +432,16 @@ public class TranscriptionServiceImpl implements TranscriptionService {
         try {
             logger.info("【数据库】开始保存病情概要到visits表，visitId: {}", visitId);
             
-            visitRepository.findByVisitId(visitId).ifPresentOrElse(
-                visit -> {
-                    visit.setChiefComplaint(chiefComplaintJson);
-                    visitRepository.save(visit);
-                    logger.info("【数据库】病情概要保存成功，visitId: {}", visitId);
-                },
-                () -> {
-                    logger.warn("【数据库】未找到visitId={}的访问记录", visitId);
-                    throw new RuntimeException("未找到访问记录: " + visitId);
-                }
-            );
+            Optional<com.medical.assistant.model.entity.Visit> visitOpt = visitRepository.findByVisitId(visitId);
+            if (visitOpt.isPresent()) {
+                com.medical.assistant.model.entity.Visit visit = visitOpt.get();
+                visit.setChiefComplaint(chiefComplaintJson);
+                visitRepository.save(visit);
+                logger.info("【数据库】病情概要保存成功，visitId: {}", visitId);
+            } else {
+                logger.warn("【数据库】未找到visitId={}的访问记录", visitId);
+                throw new RuntimeException("未找到访问记录: " + visitId);
+            }
 
         } catch (Exception e) {
             logger.error("保存病情概要失败", e);
