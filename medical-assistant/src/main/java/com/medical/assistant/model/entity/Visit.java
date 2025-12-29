@@ -15,25 +15,28 @@ public class Visit {
     @Column(name = "visit_id", nullable = false, unique = true, length = 100)
     private String visitId;
 
-    @Column(name = "doctor_id", nullable = false, length = 100)
-    private String doctorId;
-
     @Column(name = "patient_id", nullable = false, length = 100)
     private String patientId;
 
-    @Column(name = "visit_time", nullable = false)
-    private LocalDateTime visitTime;
+    @Column(name = "doctor_id", length = 100)
+    private String doctorId;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "visit_type", columnDefinition = "ENUM('OUTPATIENT', 'INPATIENT', 'FOLLOW_UP', 'EMERGENCY')")
-    private VisitType visitType = VisitType.OUTPATIENT;
+    @Column(name = "visit_type")
+    private VisitType visitType = VisitType.CONSULTATION;
 
-    @Column(name = "chief_complaint", length = 500)
+    @Column(name = "visit_date")
+    private LocalDateTime visitDate;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status")
+    private VisitStatus status = VisitStatus.SCHEDULED;
+
+    @Column(name = "chief_complaint", columnDefinition = "TEXT")
     private String chiefComplaint;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "visit_status", columnDefinition = "ENUM('IN_PROGRESS', 'COMPLETED', 'CANCELLED')")
-    private VisitStatus visitStatus = VisitStatus.IN_PROGRESS;
+    @Column(name = "notes", columnDefinition = "TEXT")
+    private String notes;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -45,8 +48,8 @@ public class Visit {
     protected void onCreate() {
         createdAt = LocalDateTime.now();
         updatedAt = LocalDateTime.now();
-        if (visitTime == null) {
-            visitTime = LocalDateTime.now();
+        if (visitDate == null) {
+            visitDate = LocalDateTime.now();
         }
     }
 
@@ -57,10 +60,10 @@ public class Visit {
 
     // Enums
     public enum VisitType {
-        OUTPATIENT, INPATIENT, FOLLOW_UP, EMERGENCY
+        CONSULTATION, FOLLOW_UP, EMERGENCY, ROUTINE_CHECK
     }
 
     public enum VisitStatus {
-        IN_PROGRESS, COMPLETED, CANCELLED
+        SCHEDULED, IN_PROGRESS, COMPLETED, CANCELLED
     }
 }
