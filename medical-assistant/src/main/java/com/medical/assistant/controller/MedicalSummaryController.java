@@ -56,15 +56,7 @@ public class MedicalSummaryController {
             if (transcript.getTranscriptText() == null || transcript.getTranscriptText().isEmpty()) {
                 return Flux.just("data: {\"event\": \"error\", \"message\": \"转录文本为空\"}\n\n");
             }
-        } catch (Exception e) {
-            log.error("【病历总结】获取转录记录失败", e);
-            return Flux.just("data: {\"event\": \"error\", \"message\": \"" + e.getMessage() + "\"}\n\n");
-        }
 
-        try {
-            // 获取转录文本
-            Transcript transcript = transcriptRepository.findByVisitId(visitId).get();
-            
             // 调用智能体生成病历总结
             return transcriptionService.generateMedicalSummaryStream(
                             visitId,
@@ -76,32 +68,33 @@ public class MedicalSummaryController {
                         if (content.equals("[COMPLETED]")) {
                             return "data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}\n\n";
                         } else if (content.startsWith("[ERROR]")) {
-                            return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7) + "\"}\n\n";
+                            return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7).replace("\"", "\\\"") + "\"}\n\n";
                         } else {
                             return "data: {\"event\": \"message\", \"content\": \"" +
-                                    content.replace("\"", "\\\"").replace("\n", "\\n") + "\"}\n\n";
+                                    content.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "") + "\"}\n\n";
                         }
                     })
+                    .doOnSubscribe(s -> log.info("【病历总结】开始返回SSE流"))
+                    .doOnNext(sse -> log.debug("【病历总结】返回SSE: {}", sse.length() > 100 ? sse.substring(0, 100) + "..." : sse))
+                    .doOnError(error -> log.error("【病历总结】SSE流错误", error))
+                    .doOnComplete(() -> log.info("【病历总结】SSE流完成"))
                     .onErrorResume(error -> {
-                        log.error("【Dify API】调用失败，使用备用方案", error);
+                        log.error("【病历总结】生成失败，使用备用方案", error);
                         return generateSimpleMedicalSummary(transcript.getTranscriptText())
                                 .map(content -> {
                                     if (content.equals("[COMPLETED]")) {
-                                        return "data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}";
-
-
+                                        return "data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}\n\n";
                                     } else if (content.startsWith("[ERROR]")) {
-                                        return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7) + "\"}";
-
-
+                                        return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7).replace("\"", "\\\"") + "\"}\n\n";
                                     } else {
-                                        return content; // 已经是SSE格式
+                                        return "data: {\"event\": \"message\", \"content\": \"" +
+                                                content.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "") + "\"}\n\n";
                                     }
                                 });
                     });
         } catch (Exception e) {
             log.error("【病历总结】生成失败", e);
-            return Flux.just("data: {\"event\": \"error\", \"message\": \"" + e.getMessage() + "\"}\n\n");
+            return Flux.just("data: {\"event\": \"error\", \"message\": \"" + e.getMessage().replace("\"", "\\\"") + "\"}\n\n");
         }
     }
 
@@ -111,22 +104,22 @@ public class MedicalSummaryController {
     private Flux<String> generateSimpleMedicalSummary(String transcriptText) {
         return Flux.create(sink -> {
             try {
-                sink.next("data: {\"event\": \"message\", \"content\": \"正在使用备用方案生成病历总结...\"}\n\n");
+                sink.next("正在使用备用方案生成病历总结...");
                 Thread.sleep(500);
                 
                 String summary = "病历总结\n==========\n主诉症状：根据语音记录分析\n原始记录：" + transcriptText + "\n\n建议：进一步检查和详细问诊";
                 String[] lines = summary.split("\n");
                 
                 for (String line : lines) {
-                    sink.next("data: {\"event\": \"message\", \"content\": \"" + line.replace("\"", "\\\"") + "\n\"}\n\n");
+                    sink.next(line + "\n");
                     Thread.sleep(100);
                 }
                 
-                sink.next("data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}\n\n");
+                sink.next("[COMPLETED]");
                 sink.complete();
                 
             } catch (Exception e) {
-                sink.next("data: {\"event\": \"error\", \"message\": \"" + e.getMessage() + "\"}\n\n");
+                sink.next("[ERROR]" + e.getMessage());
                 sink.complete();
             }
         });
