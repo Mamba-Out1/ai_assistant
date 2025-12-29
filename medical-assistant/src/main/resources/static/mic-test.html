@@ -107,7 +107,10 @@
         <div id="visualizer" class="visualizer" style="display: none;"></div>
 
         <div class="result">
-            <h3>转录结果:</h3>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3>转录结果:</h3>
+                <button id="speakBtn" style="padding: 5px 15px; font-size: 14px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>🔊 语音播报</button>
+            </div>
             <div id="result">等待录音...</div>
         </div>
 
@@ -340,8 +343,9 @@
                     updateStatus('ready', '转录完成');
                     console.log('转录成功:', transcriptionText);
                     
-                    // 启用病历总结按钮
+                    // 启用语音播报和病历总结按钮
                     if (transcriptionText) {
+                        document.getElementById('speakBtn').disabled = false;
                         document.getElementById('generateSummaryBtn').disabled = false;
                     }
                 } else {
@@ -419,6 +423,94 @@
             if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
                 e.preventDefault();
                 recordBtn.click();
+            }
+        });
+
+        // 语音播报功能
+        document.getElementById('speakBtn').addEventListener('click', async () => {
+            const text = result.textContent;
+            if (!text || text === '等待录音...' || text === '(无转录内容)') {
+                alert('没有可播报的文本');
+                return;
+            }
+
+            const speakBtn = document.getElementById('speakBtn');
+            
+            try {
+                // 调用后端TTS接口
+                speakBtn.textContent = '🔄 正在处理...';
+                speakBtn.disabled = true;
+                
+                const response = await fetch('/api/tts/speak', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+
+                const data = await response.json();
+                
+                if (data.status === 'SUCCESS') {
+                    // 播放提示音并使用浏览器TTS
+                    if (data.audioUrl) {
+                        const audio = new Audio(data.audioUrl);
+                        audio.play().catch(e => console.log('提示音播放失败:', e));
+                    }
+                    
+                    // 使用浏览器TTS播报文本
+                    if ('speechSynthesis' in window) {
+                        speechSynthesis.cancel();
+                        
+                        const utterance = new SpeechSynthesisUtterance(text);
+                        utterance.lang = 'zh-CN';
+                        utterance.rate = 0.8;
+                        utterance.pitch = 1;
+                        utterance.volume = 1;
+                        
+                        utterance.onstart = () => {
+                            speakBtn.textContent = '🔇 停止播报';
+                            speakBtn.style.background = '#dc3545';
+                            speakBtn.disabled = false;
+                        };
+                        
+                        utterance.onend = () => {
+                            speakBtn.textContent = '🔊 语音播报';
+                            speakBtn.style.background = '#28a745';
+                        };
+                        
+                        utterance.onerror = (event) => {
+                            console.error('语音播报错误:', event);
+                            speakBtn.textContent = '🔊 语音播报';
+                            speakBtn.style.background = '#28a745';
+                            alert('语音播报失败');
+                        };
+                        
+                        speechSynthesis.speak(utterance);
+                    } else {
+                        speakBtn.textContent = '🔊 语音播报';
+                        speakBtn.disabled = false;
+                        alert('浏览器不支持语音播报功能');
+                    }
+                } else {
+                    throw new Error(data.message || '后端处理失败');
+                }
+                
+            } catch (error) {
+                console.error('语音播报失败:', error);
+                speakBtn.textContent = '🔊 语音播报';
+                speakBtn.style.background = '#28a745';
+                speakBtn.disabled = false;
+                alert('语音播报失败: ' + error.message);
+            }
+        });
+
+        // 点击停止播报
+        document.getElementById('speakBtn').addEventListener('click', (e) => {
+            if (e.target.textContent.includes('停止')) {
+                speechSynthesis.cancel();
+                document.getElementById('speakBtn').textContent = '🔊 语音播报';
+                document.getElementById('speakBtn').style.background = '#28a745';
             }
         });
 
