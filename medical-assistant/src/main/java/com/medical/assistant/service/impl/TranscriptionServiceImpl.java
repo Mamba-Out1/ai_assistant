@@ -310,131 +310,40 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     @Override
     public Flux<String> generateMedicalSummaryStream(String visitId, String transcriptText,
                                                      String doctorId, String patientId) {
-        logger.info("【病历总结】开始生成，visitId: {}, doctorId: {}, patientId: {}, 文本长度: {}", 
-                visitId, doctorId, patientId, transcriptText.length());
 
         // 获取或创建会话ID
-        String conversationId = visitId;
+        String conversationId = visitId; // 使用visitId作为会话ID
+
+        // 用于收集完整响应
         StringBuilder completeResponse = new StringBuilder();
 
         return difyService.generateMedicalSummaryStream(transcriptText, doctorId, conversationId)
-                .doOnSubscribe(s -> logger.info("【病历总结】开始订阅Dify流"))
-                .doOnNext(response -> logger.info("【病历总结】收到Dify响应: event={}, answer存在={}", 
-                        response.getEvent(), response.getAnswer() != null))
-                .doOnError(error -> logger.error("【病历总结】Dify流处理错误", error))
-                .doOnComplete(() -> logger.info("【病历总结】Dify流处理完成"))
                 .map(response -> {
                     String content = "";
 
                     if ("message".equals(response.getEvent()) && response.getAnswer() != null) {
                         content = response.getAnswer();
                         completeResponse.append(content);
-                        logger.debug("【病历总结】累积内容长度: {}", completeResponse.length());
-                        
-                        // 检查是否为JSON格式的病历总结
-                        String trimmedContent = content.trim();
-                        if (trimmedContent.startsWith("{") && trimmedContent.contains("properties")) {
-                            try {
-                                MedicalSummaryDto summaryDto = difyService.extractMedicalSummary(trimmedContent);
-                                summaryDto.setVisitId(visitId);
-                                summaryDto.setDoctorId(doctorId);
-                                summaryDto.setPatientId(patientId);
-                                summaryDto.setRawResponse(trimmedContent);
-
-                                saveMedicalSummary(summaryDto);
-                                logger.info("【病历总结】JSON格式病历总结已保存");
-                                content = formatMedicalSummary(summaryDto);
-                            } catch (Exception e) {
-                                logger.error("解析JSON病历总结失败", e);
-                            }
-                        }
                     } else if ("message_end".equals(response.getEvent())) {
-                        if (completeResponse.length() > 0) {
-                            try {
-                                String fullResponse = completeResponse.toString();
-                                logger.info("【病历总结】消息结束，完整响应长度: {}", fullResponse.length());
-                                if (fullResponse.contains("properties")) {
-                                    MedicalSummaryDto summaryDto = difyService.extractMedicalSummary(fullResponse);
-                                    summaryDto.setVisitId(visitId);
-                                    summaryDto.setDoctorId(doctorId);
-                                    summaryDto.setPatientId(patientId);
-                                    summaryDto.setRawResponse(fullResponse);
+                        // 消息结束，保存病历总结
+                        try {
+                            MedicalSummaryDto summaryDto = difyService.extractMedicalSummary(completeResponse.toString());
+                            summaryDto.setVisitId(visitId);
+                            summaryDto.setDoctorId(doctorId);
+                            summaryDto.setPatientId(patientId);
+                            summaryDto.setRawResponse(completeResponse.toString());
 
-                                    saveMedicalSummary(summaryDto);
-                                    logger.info("【病历总结】完整响应病历总结已保存");
-                                }
-                            } catch (Exception e) {
-                                logger.error("保存病历总结失败", e);
-                            }
+                            saveMedicalSummary(summaryDto);
+                            content = "[COMPLETED]";
+                        } catch (Exception e) {
+                            logger.error("保存病历总结失败", e);
+                            content = "[ERROR]" + e.getMessage();
                         }
-                        content = "[COMPLETED]";
-                    } else if ("error".equals(response.getEvent())) {
-                        logger.error("【病历总结】Dify返回错误: {}", response.getAnswer());
-                        content = "[ERROR]" + (response.getAnswer() != null ? response.getAnswer() : "未知错误");
                     }
 
                     return content;
                 })
-                .filter(content -> !content.isEmpty())
-                .onErrorResume(error -> {
-                    logger.error("【病历总结】流处理失败，使用备用方案", error);
-                    return generateFallbackSummary(transcriptText, visitId, doctorId, patientId);
-                });
-    }
-    
-    private Flux<String> generateFallbackSummary(String transcriptText, String visitId, String doctorId, String patientId) {
-        return Flux.create(sink -> {
-            try {
-                logger.info("【备用方案】开始生成简单病历总结");
-                sink.next("使用备用方案生成病历总结...\n");
-                
-                // 创建简单的病历总结
-                MedicalSummaryDto summaryDto = new MedicalSummaryDto();
-                summaryDto.setVisitId(visitId);
-                summaryDto.setDoctorId(doctorId);
-                summaryDto.setPatientId(patientId);
-                summaryDto.setSymptomDetails("根据语音转录：" + transcriptText.substring(0, Math.min(200, transcriptText.length())));
-                summaryDto.setVitalSigns("暂无生命体征记录");
-                summaryDto.setPastMedicalHistory("暂无既往病史记录");
-                summaryDto.setCurrentMedications("暂无用药记录");
-                summaryDto.setRawResponse(transcriptText);
-                
-                saveMedicalSummary(summaryDto);
-                
-                String formattedSummary = formatMedicalSummary(summaryDto);
-                sink.next(formattedSummary);
-                sink.next("[COMPLETED]");
-                sink.complete();
-                
-            } catch (Exception e) {
-                logger.error("备用方案失败", e);
-                sink.next("[ERROR]" + e.getMessage());
-                sink.complete();
-            }
-        });
-    }
-    
-    private String formatMedicalSummary(MedicalSummaryDto summary) {
-        StringBuilder formatted = new StringBuilder();
-        formatted.append("\n=== 病历总结 ===\n");
-        
-        if (summary.getSymptomDetails() != null) {
-            formatted.append("\n【症状详情】\n").append(summary.getSymptomDetails()).append("\n");
-        }
-        
-        if (summary.getVitalSigns() != null) {
-            formatted.append("\n【生命体征】\n").append(summary.getVitalSigns()).append("\n");
-        }
-        
-        if (summary.getPastMedicalHistory() != null) {
-            formatted.append("\n【既往病史】\n").append(summary.getPastMedicalHistory()).append("\n");
-        }
-        
-        if (summary.getCurrentMedications() != null) {
-            formatted.append("\n【当前用药】\n").append(summary.getCurrentMedications()).append("\n");
-        }
-        
-        return formatted.toString();
+                .filter(content -> !content.isEmpty());
     }
 
     @Override
