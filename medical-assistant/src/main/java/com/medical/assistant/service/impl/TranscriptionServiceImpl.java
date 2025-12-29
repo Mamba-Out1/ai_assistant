@@ -311,56 +311,108 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     public Flux<String> generateMedicalSummaryStream(String visitId, String transcriptText,
                                                      String doctorId, String patientId) {
 
-        // 获取或创建会话ID
-        String conversationId = visitId; // 使用visitId作为会话ID
-
-        // 用于收集完整响应
-        StringBuilder completeResponse = new StringBuilder();
-
-        return difyService.generateMedicalSummaryStream(transcriptText, doctorId, conversationId)
-                .map(response -> {
-                    String content = "";
-
-                    if ("message".equals(response.getEvent()) && response.getAnswer() != null) {
-                        content = response.getAnswer();
-                        completeResponse.append(content);
-                    } else if ("message_end".equals(response.getEvent())) {
-                        // 消息结束，保存病历总结
-                        try {
-                            MedicalSummaryDto summaryDto = difyService.extractMedicalSummary(completeResponse.toString());
-                            summaryDto.setVisitId(visitId);
-                            summaryDto.setDoctorId(doctorId);
-                            summaryDto.setPatientId(patientId);
-                            summaryDto.setRawResponse(completeResponse.toString());
-
-                            saveMedicalSummary(summaryDto);
-                            content = "[COMPLETED]";
-                        } catch (Exception e) {
-                            logger.error("保存病历总结失败", e);
-                            content = "[ERROR]" + e.getMessage();
-                        }
+        logger.info("【病历总结】开始生成，visitId: {}", visitId);
+        
+        return difyService.generateMedicalSummaryStream(transcriptText, doctorId, visitId)
+                .doOnNext(response -> {
+                    logger.info("【病历总结】收到响应: event={}, answer存在={}", 
+                            response.getEvent(), response.getAnswer() != null);
+                    if (response.getAnswer() != null) {
+                        logger.info("【病历总结】响应内容长度: {}, 预览: {}", 
+                                response.getAnswer().length(),
+                                response.getAnswer().substring(0, Math.min(100, response.getAnswer().length())));
                     }
-
-                    return content;
                 })
-                .filter(content -> !content.isEmpty());
+                .filter(response -> response != null && response.getAnswer() != null)
+                .doOnNext(response -> {
+                    logger.info("【病历总结】开始处理响应，event: {}", response.getEvent());
+                })
+                .flatMap(response -> {
+                    if ("message".equals(response.getEvent())) {
+                        String content = response.getAnswer();
+                        logger.info("【病历总结】处理message事件，内容长度: {}", content.length());
+                        
+                        // 检查是否是JSON格式的病历总结
+                        if (content.trim().startsWith("{") && content.contains("properties")) {
+                            logger.info("【病历总结】检测到JSON格式，开始保存");
+                            try {
+                                MedicalSummaryDto summaryDto = difyService.extractMedicalSummary(content);
+                                summaryDto.setVisitId(visitId);
+                                summaryDto.setDoctorId(doctorId);
+                                summaryDto.setPatientId(patientId);
+                                summaryDto.setRawResponse(content);
+
+                                saveMedicalSummary(summaryDto);
+                                logger.info("【病历总结】保存成功");
+                            } catch (Exception e) {
+                                logger.error("保存病历总结失败", e);
+                            }
+                        }
+                        return Flux.just(content);
+                    } else if ("workflow_finished".equals(response.getEvent())) {
+                        logger.info("【病历总结】工作流已完成");
+                        // 处理工作流完成事件
+                        if (response.getAnswer() != null && response.getAnswer().contains("properties")) {
+                            try {
+                                logger.info("【病历总结】工作流完成，尝试保存最终结果");
+                                MedicalSummaryDto summaryDto = difyService.extractMedicalSummary(response.getAnswer());
+                                summaryDto.setVisitId(visitId);
+                                summaryDto.setDoctorId(doctorId);
+                                summaryDto.setPatientId(patientId);
+                                summaryDto.setRawResponse(response.getAnswer());
+                                saveMedicalSummary(summaryDto);
+                                logger.info("【病历总结】工作流完成状态下保存成功");
+                            } catch (Exception e) {
+                                logger.error("工作流完成时保存病历总结失败", e);
+                            }
+                        }
+                        return Flux.just(response.getAnswer());
+                    }
+                    logger.debug("【病历总结】跳过事件: {}", response.getEvent());
+                    return Flux.empty();
+                })
+                .concatWith(Flux.just("[COMPLETED]"))
+                .doOnError(error -> logger.error("【病历总结】流处理错误", error))
+                .doOnComplete(() -> logger.info("【病历总结】流处理完成"));
     }
 
     @Override
     public void saveMedicalSummary(MedicalSummaryDto summaryDto) {
         try {
-            MedicalSummary summary = new MedicalSummary();
-            summary.setSummaryId(UUID.randomUUID().toString());
-            summary.setVisitId(summaryDto.getVisitId());
-            summary.setDoctorId(summaryDto.getDoctorId());
-            summary.setPatientId(summaryDto.getPatientId());
-            summary.setSymptomDetails(summaryDto.getSymptomDetails());
-            summary.setVitalSigns(summaryDto.getVitalSigns());
-            summary.setPastMedicalHistory(summaryDto.getPastMedicalHistory());
-            summary.setCurrentMedications(summaryDto.getCurrentMedications());
+            logger.info("【数据库】开始保存病历总结，visitId: {}, doctorId: {}, patientId: {}", 
+                    summaryDto.getVisitId(), summaryDto.getDoctorId(), summaryDto.getPatientId());
+            logger.info("【数据库】病历总结内容: 症状={}, 体征={}, 病史={}, 用药={}",
+                    summaryDto.getSymptomDetails() != null ? summaryDto.getSymptomDetails().substring(0, Math.min(50, summaryDto.getSymptomDetails().length())) + "..." : "null",
+                    summaryDto.getVitalSigns() != null ? summaryDto.getVitalSigns().substring(0, Math.min(30, summaryDto.getVitalSigns().length())) + "..." : "null",
+                    summaryDto.getPastMedicalHistory() != null ? summaryDto.getPastMedicalHistory().substring(0, Math.min(30, summaryDto.getPastMedicalHistory().length())) + "..." : "null",
+                    summaryDto.getCurrentMedications() != null ? summaryDto.getCurrentMedications().substring(0, Math.min(30, summaryDto.getCurrentMedications().length())) + "..." : "null");
+            
+            // 检查是否已存在相同 visitId 的病历总结
+            Optional<MedicalSummary> existingSummary = medicalSummaryRepository.findByVisitId(summaryDto.getVisitId());
+            if (existingSummary.isPresent()) {
+                logger.info("【数据库】发现已存在的病历总结，将进行更新，summaryId: {}", existingSummary.get().getSummaryId());
+                MedicalSummary summary = existingSummary.get();
+                summary.setSymptomDetails(summaryDto.getSymptomDetails());
+                summary.setVitalSigns(summaryDto.getVitalSigns());
+                summary.setPastMedicalHistory(summaryDto.getPastMedicalHistory());
+                summary.setCurrentMedications(summaryDto.getCurrentMedications());
+                
+                MedicalSummary saved = medicalSummaryRepository.save(summary);
+                logger.info("【数据库】病历总结更新成功，summaryId: {}", saved.getSummaryId());
+            } else {
+                MedicalSummary summary = new MedicalSummary();
+                summary.setSummaryId(UUID.randomUUID().toString());
+                summary.setVisitId(summaryDto.getVisitId());
+                summary.setDoctorId(summaryDto.getDoctorId());
+                summary.setPatientId(summaryDto.getPatientId());
+                summary.setSymptomDetails(summaryDto.getSymptomDetails());
+                summary.setVitalSigns(summaryDto.getVitalSigns());
+                summary.setPastMedicalHistory(summaryDto.getPastMedicalHistory());
+                summary.setCurrentMedications(summaryDto.getCurrentMedications());
 
-            medicalSummaryRepository.save(summary);
-            logger.info("【数据库】病历总结已保存，summaryId: {}", summary.getSummaryId());
+                MedicalSummary saved = medicalSummaryRepository.save(summary);
+                logger.info("【数据库】病历总结新增成功，summaryId: {}", saved.getSummaryId());
+            }
 
         } catch (Exception e) {
             logger.error("保存病历总结失败", e);

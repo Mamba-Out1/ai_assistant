@@ -106,20 +106,61 @@ public class DifyServiceImpl implements DifyService {
                 .bodyToFlux(String.class)
                 .timeout(java.time.Duration.ofSeconds(30))
                 .doOnSubscribe(s -> log.info("【Dify API】开始订阅响应流"))
-                .doOnNext(data -> log.info("【Dify API】收到原始数据: {}", data))
+                .doOnNext(data -> {
+                    log.info("【Dify API】收到原始数据: {}", data);
+                })
                 .doOnError(error -> log.error("【Dify API】流处理错误", error))
                 .doOnComplete(() -> log.info("【Dify API】流处理完成"))
-                .filter(data -> data.startsWith("data: "))
+                .filter(data -> {
+                    // 处理两种格式：
+                    // 1. SSE格式: "data: {...}"
+                    // 2. 直接JSON: "{...}"
+                    String trimmed = data.trim();
+                    if (trimmed.isEmpty() || trimmed.equals("[DONE]")) {
+                        return false;
+                    }
+                    if (trimmed.equals("data: [DONE]")) {
+                        return false;
+                    }
+                    // 保留"data: "开头和直接JSON的数据
+                    return trimmed.startsWith("data: ") || trimmed.startsWith("{");
+                })
                 .map(data -> {
                     try {
-                        String jsonStr = data.substring(6); // 移除 "data: " 前缀
-                        return objectMapper.readValue(jsonStr, DifyChatResponse.class);
+                        String jsonStr = data.trim();
+                        
+                        // 移除 "data: " 前缀（如果有）
+                        if (jsonStr.startsWith("data: ")) {
+                            jsonStr = jsonStr.substring(6);
+                        }
+                        
+                        // 解析Dify响应
+                        DifyChatResponse response = objectMapper.readValue(jsonStr, DifyChatResponse.class);
+                        
+                        // 处理HTML实体转义
+                        if (response.getAnswer() != null) {
+                            String unescapedJson = response.getAnswer()
+                                    .replace("&quot;", "\"")
+                                    .replace("&amp;", "&")
+                                    .replace("&lt;", "<")
+                                    .replace("&gt;", ">")
+                                    .replace("\\n", "\n")
+                                    .replace("\\\"", "\"");
+                            response.setAnswer(unescapedJson);
+                        }
+                        
+                        log.info("【Dify API】解析成功: event={}, answer存在={}", 
+                                response.getEvent(), response.getAnswer() != null);
+                        return response;
                     } catch (Exception e) {
                         log.error("解析Dify响应失败: {}", data, e);
                         return null;
                     }
                 })
                 .filter(response -> response != null)
+                .doOnNext(response -> {
+                    log.info("【Dify API】成功处理事件: event={}", response.getEvent());
+                })
                 .onErrorReturn(createErrorResponse("调用Dify API失败"));
     }
     
@@ -133,55 +174,68 @@ public class DifyServiceImpl implements DifyService {
     @Override
     public MedicalSummaryDto extractMedicalSummary(String completeResponse) {
         try {
-            // 尝试解析structured_output
-            Map<String, Object> response = objectMapper.readValue(completeResponse, Map.class);
-
-            if (response.containsKey("structured_output")) {
-                Map<String, Object> structuredOutput = (Map<String, Object>) response.get("structured_output");
-                Map<String, Object> properties = (Map<String, Object>) structuredOutput.get("properties");
-
-                MedicalSummaryDto summary = new MedicalSummaryDto();
-
-                // 提取症状详情
-                if (properties.containsKey("symptom_details")) {
-                    Map<String, String> symptomDetails = (Map<String, String>) properties.get("symptom_details");
-                    summary.setSymptomDetails(symptomDetails.get("description"));
-                }
-
-                // 提取生命体征
-                if (properties.containsKey("vital_signs")) {
-                    Map<String, String> vitalSigns = (Map<String, String>) properties.get("vital_signs");
-                    summary.setVitalSigns(vitalSigns.get("description"));
-                }
-
-                // 提取既往病史
-                if (properties.containsKey("past_medical_history")) {
-                    Map<String, String> pastHistory = (Map<String, String>) properties.get("past_medical_history");
-                    summary.setPastMedicalHistory(pastHistory.get("description"));
-                }
-
-                // 提取当前用药
-                if (properties.containsKey("current_medications")) {
-                    Map<String, String> medications = (Map<String, String>) properties.get("current_medications");
-                    summary.setCurrentMedications(medications.get("description"));
-                }
-
-                return summary;
+            log.info("【解析病历总结】开始解析，原始数据: {}", completeResponse.substring(0, Math.min(200, completeResponse.length())));
+            
+            // 直接解析JSON格式的病历总结
+            Map<String, Object> jsonResponse = objectMapper.readValue(completeResponse, Map.class);
+            
+            // 检查是否有properties字段
+            if (jsonResponse.containsKey("properties")) {
+                Map<String, Object> properties = (Map<String, Object>) jsonResponse.get("properties");
+                return extractFromProperties(properties);
             }
-
-            // 如果没有structured_output，尝试从普通文本中解析
-            return parseFromPlainText(completeResponse);
-
-        } catch (Exception e) {
-            log.error("解析病历总结失败", e);
-            // 返回包含原始文本的默认结构
+            
+            // 如果没有properties，返回默认结构
             MedicalSummaryDto summary = new MedicalSummaryDto();
             summary.setSymptomDetails("症状描述：" + completeResponse);
             summary.setVitalSigns("生命体征：暂无记录");
             summary.setPastMedicalHistory("既往病史：暂无记录");
             summary.setCurrentMedications("当前用药：暂无记录");
             return summary;
+
+        } catch (Exception e) {
+            log.error("解析病历总结失败", e);
+            MedicalSummaryDto summary = new MedicalSummaryDto();
+            summary.setSymptomDetails("症状描述：" + completeResponse);
+            summary.setVitalSigns("生命体征：解析失败");
+            summary.setPastMedicalHistory("既往病史：解析失败");
+            summary.setCurrentMedications("当前用药：解析失败");
+            return summary;
         }
+    }
+    
+    private MedicalSummaryDto extractFromProperties(Map<String, Object> properties) {
+        MedicalSummaryDto summary = new MedicalSummaryDto();
+
+        // 提取症状详情
+        if (properties.containsKey("symptom_details")) {
+            Map<String, String> symptomDetails = (Map<String, String>) properties.get("symptom_details");
+            String desc = symptomDetails.get("description");
+            summary.setSymptomDetails(desc != null && !desc.trim().isEmpty() ? desc : "症状详情：暂无记录");
+        }
+
+        // 提取生命体征
+        if (properties.containsKey("vital_signs")) {
+            Map<String, String> vitalSigns = (Map<String, String>) properties.get("vital_signs");
+            String desc = vitalSigns.get("description");
+            summary.setVitalSigns(desc != null && !desc.trim().isEmpty() ? desc : "生命体征：暂无记录");
+        }
+
+        // 提取既往病史
+        if (properties.containsKey("past_medical_history")) {
+            Map<String, String> pastHistory = (Map<String, String>) properties.get("past_medical_history");
+            String desc = pastHistory.get("description");
+            summary.setPastMedicalHistory(desc != null && !desc.trim().isEmpty() ? desc : "既往病史：暂无记录");
+        }
+
+        // 提取当前用药
+        if (properties.containsKey("current_medications")) {
+            Map<String, String> medications = (Map<String, String>) properties.get("current_medications");
+            String desc = medications.get("description");
+            summary.setCurrentMedications(desc != null && !desc.trim().isEmpty() ? desc : "当前用药：暂无记录");
+        }
+
+        return summary;
     }
 
     private MedicalSummaryDto parseFromPlainText(String text) {
