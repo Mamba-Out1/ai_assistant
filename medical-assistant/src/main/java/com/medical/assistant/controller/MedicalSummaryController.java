@@ -105,10 +105,17 @@ public class MedicalSummaryController {
                     )
                     .map(content -> {
                         if (content.equals("[COMPLETED]")) {
+                            log.info("【病历总结】推送完成事件");
                             return "data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}\n\n";
                         } else if (content.startsWith("[ERROR]")) {
+                            log.error("【病历总结】推送错误事件: {}", content);
                             return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7) + "\"}\n\n";
+                        } else if (content.trim().startsWith("{") && content.contains("properties")) {
+                            // 这是JSON格式的病历总结，直接推送
+                            log.info("【病历总结】推送JSON格式病历总结，长度: {}", content.length());
+                            return "data: {\"event\": \"message\", \"content\": " + content.replace("\n", "").replace("  ", "") + "}\n\n";
                         } else {
+                            // 普通文本内容
                             return "data: {\"event\": \"message\", \"content\": \"" +
                                     content.replace("\"", "\\\"").replace("\n", "\\n") + "\"}\n\n";
                         }

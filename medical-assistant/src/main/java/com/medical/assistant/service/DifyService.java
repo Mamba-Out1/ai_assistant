@@ -15,4 +15,9 @@ public interface DifyService {
      * 从流式响应中提取病历总结
      */
     MedicalSummaryDto extractMedicalSummary(String completeResponse);
+    
+    /**
+     * Dify AI对话
+     */
+    Flux<DifyChatResponse> chatWithDify(String userInput, String userId, String conversationId);
 }

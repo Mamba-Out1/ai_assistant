@@ -114,6 +114,18 @@
             <div id="result">等待录音...</div>
         </div>
 
+        <!-- Dify AI对话面板 -->
+        <div class="result" style="margin-top: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3>Dify AI对话:</h3>
+            </div>
+            <div style="margin-bottom: 10px;">
+                <input type="text" id="chatInput" placeholder="输入您的问题..." style="width: 70%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-right: 10px;">
+                <button id="chatBtn" style="padding: 8px 15px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">发送</button>
+            </div>
+            <div id="chatResult" style="min-height: 100px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background: #f9f9f9; max-height: 300px; overflow-y: auto;">等待您的问题...</div>
+        </div>
+
         <!-- 病历总结面板 -->
         <div class="result" style="margin-top: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -542,6 +554,76 @@
             }
         });
 
+        // Dify AI对话功能
+        document.getElementById('chatBtn').addEventListener('click', async () => {
+            const query = document.getElementById('chatInput').value.trim();
+            const userId = document.getElementById('userId').value;
+            const chatResult = document.getElementById('chatResult');
+            
+            if (!query) {
+                alert('请输入问题');
+                return;
+            }
+            
+            chatResult.innerHTML = '<div style="color: #007bff;">🤖 AI正在思考...</div>';
+            
+            try {
+                const url = `/api/dify/chat?userInput=${encodeURIComponent(query)}&userId=${encodeURIComponent(userId)}`;
+                
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'text/event-stream',
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let chatContent = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ') && line.length > 6) {
+                            const content = line.substring(6);
+                            if (content.trim()) {
+                                chatContent += content;
+                                chatResult.innerHTML = `<div style="color: #007bff;">🤖 AI正在回答...</div><div style="margin-top: 10px; white-space: pre-wrap; line-height: 1.5;">${chatContent}</div>`;
+                            }
+                        }
+                    }
+                }
+                
+                if (chatContent) {
+                    chatResult.innerHTML = `<div style="color: #28a745; font-weight: bold;">🤖 AI回答：</div><div style="margin-top: 10px; white-space: pre-wrap; line-height: 1.5;">${chatContent}</div>`;
+                    document.getElementById('chatInput').value = '';
+                } else {
+                    chatResult.innerHTML = '<div style="color: #dc3545;">❌ 未收到AI回答</div>';
+                }
+                
+            } catch (error) {
+                console.error('Dify对话失败:', error);
+                chatResult.innerHTML = `<div style="color: #dc3545;">❌ 对话失败: ${error.message}</div>`;
+            }
+        });
+        
+        // 回车键发送消息
+        document.getElementById('chatInput').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                document.getElementById('chatBtn').click();
+            }
+        });
+
         // 生成病历总结
         document.getElementById('generateSummaryBtn').addEventListener('click', async () => {
             const visitId = document.getElementById('visitId').value;
@@ -596,34 +678,83 @@
                                     summaryResult.innerHTML = `<div style="color: #dc3545;">❌ 生成失败: ${data.message}</div>`;
                                     return;
                                 } else if (data.event === 'message' && data.content) {
-                                    summaryContent += data.content;
                                     // 检查是否是JSON格式的病历总结
-                                    if (data.content.trim().startsWith('{') && data.content.includes('properties')) {
+                                    if (typeof data.content === 'object' && data.content.properties) {
+                                        // 直接是对象
+                                        const jsonData = data.content;
+                                        let formattedSummary = '<div style="color: #28a745; font-weight: bold;">✅ 病历总结生成完成</div>';
+                                        formattedSummary += '<div style="margin-top: 15px; background: white; border-radius: 8px; overflow: hidden;">';
+                                        
+                                        if (jsonData.properties.symptom_details) {
+                                            formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                <div style="font-weight: bold; color: #007bff; margin-bottom: 8px;">🔍 症状详情</div>
+                                                <div style="color: #333; line-height: 1.6;">${jsonData.properties.symptom_details.description}</div>
+                                            </div>`;
+                                        }
+                                        if (jsonData.properties.vital_signs) {
+                                            formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                <div style="font-weight: bold; color: #dc3545; margin-bottom: 8px;">❤️ 生命体征</div>
+                                                <div style="color: #333; line-height: 1.6;">${jsonData.properties.vital_signs.description}</div>
+                                            </div>`;
+                                        }
+                                        if (jsonData.properties.past_medical_history) {
+                                            formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                <div style="font-weight: bold; color: #ffc107; margin-bottom: 8px;">📋 既往病史</div>
+                                                <div style="color: #333; line-height: 1.6;">${jsonData.properties.past_medical_history.description}</div>
+                                            </div>`;
+                                        }
+                                        if (jsonData.properties.current_medications) {
+                                            formattedSummary += `<div style="padding: 15px;">
+                                                <div style="font-weight: bold; color: #17a2b8; margin-bottom: 8px;">💊 当前用药</div>
+                                                <div style="color: #333; line-height: 1.6;">${jsonData.properties.current_medications.description}</div>
+                                            </div>`;
+                                        }
+                                        
+                                        formattedSummary += '</div>';
+                                        summaryResult.innerHTML = formattedSummary;
+                                        return;
+                                    } else if (typeof data.content === 'string' && data.content.trim().startsWith('{')) {
+                                        // 字符串格式，需要解析
                                         try {
                                             const jsonData = JSON.parse(data.content);
                                             if (jsonData.properties) {
-                                                let formattedSummary = '病历总结\n==========\n';
+                                                let formattedSummary = '<div style="color: #28a745; font-weight: bold;">✅ 病历总结生成完成</div>';
+                                                formattedSummary += '<div style="margin-top: 15px; background: white; border-radius: 8px; overflow: hidden;">';
                                                 
                                                 if (jsonData.properties.symptom_details) {
-                                                    formattedSummary += '症状详情：\n' + jsonData.properties.symptom_details.description + '\n\n';
+                                                    formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                        <div style="font-weight: bold; color: #007bff; margin-bottom: 8px;">🔍 症状详情</div>
+                                                        <div style="color: #333; line-height: 1.6;">${jsonData.properties.symptom_details.description}</div>
+                                                    </div>`;
                                                 }
                                                 if (jsonData.properties.vital_signs) {
-                                                    formattedSummary += '生命体征：\n' + jsonData.properties.vital_signs.description + '\n\n';
+                                                    formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                        <div style="font-weight: bold; color: #dc3545; margin-bottom: 8px;">❤️ 生命体征</div>
+                                                        <div style="color: #333; line-height: 1.6;">${jsonData.properties.vital_signs.description}</div>
+                                                    </div>`;
                                                 }
                                                 if (jsonData.properties.past_medical_history) {
-                                                    formattedSummary += '既往病史：\n' + jsonData.properties.past_medical_history.description + '\n\n';
+                                                    formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                        <div style="font-weight: bold; color: #ffc107; margin-bottom: 8px;">📋 既往病史</div>
+                                                        <div style="color: #333; line-height: 1.6;">${jsonData.properties.past_medical_history.description}</div>
+                                                    </div>`;
                                                 }
                                                 if (jsonData.properties.current_medications) {
-                                                    formattedSummary += '当前用药：\n' + jsonData.properties.current_medications.description + '\n\n';
+                                                    formattedSummary += `<div style="padding: 15px;">
+                                                        <div style="font-weight: bold; color: #17a2b8; margin-bottom: 8px;">💊 当前用药</div>
+                                                        <div style="color: #333; line-height: 1.6;">${jsonData.properties.current_medications.description}</div>
+                                                    </div>`;
                                                 }
                                                 
-                                                summaryResult.innerHTML = `<div style="color: #28a745; font-weight: bold;">✅ 病历总结生成完成</div><div style="margin-top: 10px; white-space: pre-wrap; background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">${formattedSummary}</div>`;
+                                                formattedSummary += '</div>';
+                                                summaryResult.innerHTML = formattedSummary;
                                                 return;
                                             }
                                         } catch (e) {
-                                            console.error('解析JSON病历总结失败:', e);
+                                            console.error('解析JSON病历总结失败:', e, 'content:', data.content);
                                         }
                                     }
+                                    summaryContent += (typeof data.content === 'string' ? data.content : JSON.stringify(data.content));
                                     summaryResult.innerHTML = `<div style="color: #007bff;">🔄 正在生成...</div><div style="margin-top: 10px; white-space: pre-wrap;">${summaryContent}</div>`;
                                 }
                             } catch (e) {

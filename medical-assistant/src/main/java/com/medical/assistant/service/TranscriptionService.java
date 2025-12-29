@@ -59,4 +59,9 @@ public interface TranscriptionService {
      * 保存病历总结
      */
     void saveMedicalSummary(MedicalSummaryDto summaryDto);
+
+    /**
+     * Dify AI对话（流式）
+     */
+    Flux<String> chatWithDifyStream(String query, String userId);
 }
