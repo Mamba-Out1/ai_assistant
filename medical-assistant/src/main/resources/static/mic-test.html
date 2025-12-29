@@ -427,6 +427,17 @@
                     const data = await response.json();
                     summaryResult.innerHTML = `<div style="color: #28a745;">✅ 找到转录记录</div><div style="margin-top: 10px; font-size: 12px; color: #666;">文本长度: ${data.transcriptText ? data.transcriptText.length : 0} 字符</div><div style="margin-top: 5px; max-height: 100px; overflow-y: auto; font-size: 12px; background: #f8f9fa; padding: 8px; border-radius: 4px;">${data.transcriptText || '无文本'}</div>`;
                     document.getElementById('generateSummaryBtn').disabled = false;
+                    
+                    // 检查是否已有病历总结
+                    try {
+                        const summaryResponse = await fetch(`/api/medical-summary/visit/${encodeURIComponent(visitId)}`);
+                        if (summaryResponse.ok) {
+                            const summaryData = await summaryResponse.json();
+                            summaryResult.innerHTML += `<div style="margin-top: 10px; padding: 10px; background: #e7f3ff; border-radius: 4px; border-left: 4px solid #007bff;"><strong>ℹ️ 已存在病历总结</strong><br><small>创建时间: ${summaryData.createdAt}</small></div>`;
+                        }
+                    } catch (e) {
+                        // 忽略病历总结检查错误
+                    }
                 } else if (response.status === 404) {
                     summaryResult.innerHTML = '<div style="color: #dc3545;">❌ 未找到转录记录，请先进行语音转录</div>';
                 } else {
@@ -494,6 +505,33 @@
                                     return;
                                 } else if (data.event === 'message' && data.content) {
                                     summaryContent += data.content;
+                                    // 检查是否是JSON格式的病历总结
+                                    if (data.content.trim().startsWith('{') && data.content.includes('properties')) {
+                                        try {
+                                            const jsonData = JSON.parse(data.content);
+                                            if (jsonData.properties) {
+                                                let formattedSummary = '病历总结\n==========\n';
+                                                
+                                                if (jsonData.properties.symptom_details) {
+                                                    formattedSummary += '症状详情：\n' + jsonData.properties.symptom_details.description + '\n\n';
+                                                }
+                                                if (jsonData.properties.vital_signs) {
+                                                    formattedSummary += '生命体征：\n' + jsonData.properties.vital_signs.description + '\n\n';
+                                                }
+                                                if (jsonData.properties.past_medical_history) {
+                                                    formattedSummary += '既往病史：\n' + jsonData.properties.past_medical_history.description + '\n\n';
+                                                }
+                                                if (jsonData.properties.current_medications) {
+                                                    formattedSummary += '当前用药：\n' + jsonData.properties.current_medications.description + '\n\n';
+                                                }
+                                                
+                                                summaryResult.innerHTML = `<div style="color: #28a745; font-weight: bold;">✅ 病历总结生成完成</div><div style="margin-top: 10px; white-space: pre-wrap; background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">${formattedSummary}</div>`;
+                                                return;
+                                            }
+                                        } catch (e) {
+                                            console.error('解析JSON病历总结失败:', e);
+                                        }
+                                    }
                                     summaryResult.innerHTML = `<div style="color: #007bff;">🔄 正在生成...</div><div style="margin-top: 10px; white-space: pre-wrap;">${summaryContent}</div>`;
                                 }
                             } catch (e) {
