@@ -7,6 +7,9 @@ import com.medical.assistant.model.entity.Transcript;
 import com.medical.assistant.service.TranscriptionService;
 import com.medical.assistant.repository.MedicalSummaryRepository;
 import com.medical.assistant.repository.TranscriptRepository;
+
+import java.util.List;
+import java.util.Optional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -32,6 +35,34 @@ public class MedicalSummaryController {
 
     @Autowired
     private MedicalSummaryRepository medicalSummaryRepository;
+    
+    /**
+     * 获取所有病历总结（用于测试）
+     */
+    @GetMapping("/all")
+    public ResponseEntity<List<MedicalSummaryResponse>> getAllMedicalSummaries() {
+        try {
+            List<MedicalSummary> summaries = medicalSummaryRepository.findAll();
+            List<MedicalSummaryResponse> responses = summaries.stream()
+                    .map(summary -> MedicalSummaryResponse.builder()
+                            .summaryId(summary.getSummaryId())
+                            .visitId(summary.getVisitId())
+                            .doctorId(summary.getDoctorId())
+                            .patientId(summary.getPatientId())
+                            .symptomDetails(summary.getSymptomDetails())
+                            .vitalSigns(summary.getVitalSigns())
+                            .pastMedicalHistory(summary.getPastMedicalHistory())
+                            .currentMedications(summary.getCurrentMedications())
+                            .createdAt(summary.getCreatedAt())
+                            .build())
+                    .collect(java.util.stream.Collectors.toList());
+            
+            return ResponseEntity.ok(responses);
+        } catch (Exception e) {
+            log.error("获取所有病历总结失败", e);
+            return ResponseEntity.status(500).build();
+        }
+    }
 
     /**
      * 根据visitId生成病历总结（流式返回）
@@ -87,13 +118,9 @@ public class MedicalSummaryController {
                         return generateSimpleMedicalSummary(transcript.getTranscriptText())
                                 .map(content -> {
                                     if (content.equals("[COMPLETED]")) {
-                                        return "data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}";
-
-
+                                        return "data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}\n\n";
                                     } else if (content.startsWith("[ERROR]")) {
-                                        return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7) + "\"}";
-
-
+                                        return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7) + "\"}\n\n";
                                     } else {
                                         return content; // 已经是SSE格式
                                     }
@@ -122,11 +149,11 @@ public class MedicalSummaryController {
                     Thread.sleep(100);
                 }
                 
-                sink.next("data: {\"event\": \"completed\", \"message\": \"病历总结生成完成\"}\n\n");
+                sink.next("[COMPLETED]");
                 sink.complete();
                 
             } catch (Exception e) {
-                sink.next("data: {\"event\": \"error\", \"message\": \"" + e.getMessage() + "\"}\n\n");
+                sink.next("[ERROR]" + e.getMessage());
                 sink.complete();
             }
         });
@@ -138,8 +165,16 @@ public class MedicalSummaryController {
     @GetMapping("/visit/{visitId}")
     public ResponseEntity<MedicalSummaryResponse> getMedicalSummaryByVisit(@PathVariable String visitId) {
         try {
-            MedicalSummary summary = medicalSummaryRepository.findByVisitId(visitId)
-                    .orElseThrow(() -> new RuntimeException("未找到病历总结"));
+            log.info("【获取病历总结】visitId: {}", visitId);
+            
+            Optional<MedicalSummary> summaryOpt = medicalSummaryRepository.findByVisitId(visitId);
+            if (!summaryOpt.isPresent()) {
+                log.warn("【获取病历总结】未找到visitId={}的病历总结", visitId);
+                return ResponseEntity.notFound().build();
+            }
+            
+            MedicalSummary summary = summaryOpt.get();
+            log.info("【获取病历总结】找到病历总结，summaryId: {}", summary.getSummaryId());
 
             MedicalSummaryResponse response = MedicalSummaryResponse.builder()
                     .summaryId(summary.getSummaryId())
@@ -153,11 +188,12 @@ public class MedicalSummaryController {
                     .createdAt(summary.getCreatedAt())
                     .build();
 
+            log.info("【获取病历总结】返回响应成功");
             return ResponseEntity.ok(response);
 
         } catch (Exception e) {
-            log.error("获取病历总结失败", e);
-            return ResponseEntity.notFound().build();
+            log.error("【获取病历总结】失败", e);
+            return ResponseEntity.status(500).build();
         }
     }
 
@@ -165,19 +201,21 @@ public class MedicalSummaryController {
      * 手动创建病历总结
      */
     @PostMapping("/create")
-    public ResponseEntity<Map<String, String>> createMedicalSummary(@Valid @RequestBody MedicalSummaryRequest request) {
+    public ResponseEntity<Map<String, String>> createMedicalSummary(@RequestBody MedicalSummaryRequest request) {
         try {
             // 获取转录文本
             Transcript transcript = transcriptRepository.findByVisitId(request.getVisitId())
                     .orElseThrow(() -> new RuntimeException("未找到转录记录"));
 
             // 同步调用生成病历总结
-            transcriptionService.generateMedicalSummaryStream(
+            String result = transcriptionService.generateMedicalSummaryStream(
                     request.getVisitId(),
                     transcript.getTranscriptText(),
                     request.getDoctorId(),
                     request.getPatientId()
             ).blockLast(); // 等待完成
+            
+            log.info("【病历总结】同步生成完成，结果: {}", result);
 
             Map<String, String> response = new HashMap<>();
             response.put("status", "SUCCESS");

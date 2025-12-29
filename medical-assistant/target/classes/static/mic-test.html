@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>麦克风录音测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #333; margin-bottom: 30px; }
+        .control-panel { text-align: center; margin: 30px 0; }
+        .record-btn { 
+            padding: 15px 30px; 
+            font-size: 18px; 
+            border: none; 
+            border-radius: 50px; 
+            cursor: pointer; 
+            transition: all 0.3s;
+            margin: 10px;
+        }
+        .record-btn.start { background: #28a745; color: white; }
+        .record-btn.stop { background: #dc3545; color: white; }
+        .record-btn:hover { transform: scale(1.05); }
+        .status { 
+            text-align: center; 
+            margin: 20px 0; 
+            padding: 10px; 
+            border-radius: 5px; 
+            font-weight: bold;
+        }
+        .status.ready { background: #d4edda; color: #155724; }
+        .status.recording { background: #fff3cd; color: #856404; }
+        .status.processing { background: #cce7ff; color: #004085; }
+        .status.error { background: #f8d7da; color: #721c24; }
+        .result { 
+            margin: 20px 0; 
+            padding: 15px; 
+            border: 1px solid #ddd; 
+            border-radius: 5px; 
+            background: #f9f9f9; 
+            min-height: 100px;
+        }
+        .settings { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 15px; 
+            margin: 20px 0; 
+        }
+        .setting { display: flex; flex-direction: column; }
+        .setting label { margin-bottom: 5px; font-weight: bold; }
+        .setting input, .setting select { padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+        .timer { font-size: 24px; font-weight: bold; color: #dc3545; text-align: center; margin: 10px 0; }
+        .visualizer { 
+            display: flex; 
+            justify-content: center; 
+            align-items: end; 
+            height: 60px; 
+            margin: 20px 0; 
+            gap: 2px;
+        }
+        .bar { 
+            width: 4px; 
+            background: #28a745; 
+            border-radius: 2px; 
+            transition: height 0.1s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 麦克风录音测试</h1>
+        
+        <div class="settings">
+            <div class="setting">
+                <label>用户ID</label>
+                <input type="text" id="userId" value="test_user_001">
+            </div>
+            <div class="setting">
+                <label>访问ID</label>
+                <input type="text" id="visitId" value="visit_001">
+            </div>
+            <div class="setting">
+                <label>语言模式</label>
+                <select id="language">
+                    <option value="autodialect">中英+方言识别</option>
+                    <option value="autominor">37语种识别</option>
+                </select>
+            </div>
+            <div class="setting">
+                <label>领域优化</label>
+                <select id="domain">
+                    <option value="">无</option>
+                    <option value="medical" selected>医疗</option>
+                    <option value="finance">金融</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="control-panel">
+            <button id="recordBtn" class="record-btn start">🎤 开始录音</button>
+        </div>
+
+        <div id="status" class="status ready">准备就绪 - 点击开始录音</div>
+        
+        <div id="timer" class="timer" style="display: none;">00:00</div>
+        
+        <div id="visualizer" class="visualizer" style="display: none;"></div>
+
+        <div class="result">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3>转录结果:</h3>
+                <button id="speakBtn" style="padding: 5px 15px; font-size: 14px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>🔊 语音播报</button>
+            </div>
+            <div id="result">等待录音...</div>
+        </div>
+
+        <!-- 病历总结面板 -->
+        <div class="result" style="margin-top: 20px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <h3>病历总结:</h3>
+                <div>
+                    <button id="checkTranscriptBtn" style="padding: 5px 15px; font-size: 14px; background: #6c757d; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">检查转录</button>
+                    <button id="generateSummaryBtn" style="padding: 5px 15px; font-size: 14px; background: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;" disabled>生成病历总结</button>
+                    <button id="getSummaryBtn" style="padding: 5px 15px; font-size: 14px; background: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;" disabled>获取已有总结</button>
+                </div>
+            </div>
+            <div id="summaryResult" style="min-height: 100px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background: #f9f9f9;">等待转录完成后生成病历总结...</div>
+        </div>
+    </div>
+
+    <script>
+        let isRecording = false;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let startTime = null;
+        let timerInterval = null;
+        let audioContext = null;
+        let analyser = null;
+        let visualizerInterval = null;
+
+        const recordBtn = document.getElementById('recordBtn');
+        const status = document.getElementById('status');
+        const timer = document.getElementById('timer');
+        const result = document.getElementById('result');
+        const visualizer = document.getElementById('visualizer');
+
+        // 初始化音频可视化
+        function initVisualizer() {
+            visualizer.innerHTML = '';
+            for (let i = 0; i < 32; i++) {
+                const bar = document.createElement('div');
+                bar.className = 'bar';
+                bar.style.height = '5px';
+                visualizer.appendChild(bar);
+            }
+        }
+
+        // 更新状态
+        function updateStatus(type, message) {
+            status.className = `status ${type}`;
+            status.textContent = message;
+        }
+
+        // 开始录音
+        async function startRecording() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    }
+                });
+
+                // 设置MediaRecorder
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onstop = () => {
+                    processRecording();
+                };
+
+                // 设置音频可视化
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+                analyser.fftSize = 256;
+
+                // 开始录音
+                mediaRecorder.start(100); // 每100ms收集一次数据
+                isRecording = true;
+
+                // 更新UI
+                recordBtn.textContent = '⏹️ 停止录音';
+                recordBtn.className = 'record-btn stop';
+                updateStatus('recording', '正在录音中...');
+                
+                // 启动计时器和可视化
+                startTimer();
+                startVisualizer();
+
+            } catch (error) {
+                console.error('录音失败:', error);
+                updateStatus('error', '录音失败: ' + error.message);
+            }
+        }
+
+        // 停止录音
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+                isRecording = false;
+
+                // 停止所有音频轨道
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+                // 更新UI
+                recordBtn.textContent = '🎤 开始录音';
+                recordBtn.className = 'record-btn start';
+                updateStatus('processing', '正在处理音频...');
+
+                // 停止计时器和可视化
+                stopTimer();
+                stopVisualizer();
+            }
+        }
+
+        // 处理录音
+        async function processRecording() {
+            try {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                
+                // 转换为PCM格式
+                const pcmBlob = await convertToPCM(audioBlob);
+                
+                // 发送到服务器
+                await sendToServer(pcmBlob);
+
+            } catch (error) {
+                console.error('处理录音失败:', error);
+                updateStatus('error', '处理失败: ' + error.message);
+                result.textContent = '处理失败: ' + error.message;
+            }
+        }
+
+        // 转换为PCM格式
+        async function convertToPCM(audioBlob) {
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            
+            // 重采样到16kHz
+            const targetSampleRate = 16000;
+            const channelData = audioBuffer.getChannelData(0);
+            const samples = resample(channelData, audioBuffer.sampleRate, targetSampleRate);
+            
+            // 转换为16位PCM
+            const pcmData = new Int16Array(samples.length);
+            for (let i = 0; i < samples.length; i++) {
+                const s = Math.max(-1, Math.min(1, samples[i]));
+                pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            
+            return new Blob([pcmData.buffer], { type: 'audio/pcm' });
+        }
+
+        // 重采样函数
+        function resample(buffer, fromSampleRate, toSampleRate) {
+            if (fromSampleRate === toSampleRate) return buffer;
+            
+            const sampleRateRatio = fromSampleRate / toSampleRate;
+            const newLength = Math.round(buffer.length / sampleRateRatio);
+            const result = new Float32Array(newLength);
+            
+            for (let i = 0; i < newLength; i++) {
+                const index = i * sampleRateRatio;
+                const indexInt = Math.floor(index);
+                const indexFrac = index - indexInt;
+                
+                if (indexInt < buffer.length - 1) {
+                    result[i] = buffer[indexInt] * (1 - indexFrac) + buffer[indexInt + 1] * indexFrac;
+                } else {
+                    result[i] = buffer[indexInt] || 0;
+                }
+            }
+            
+            return result;
+        }
+
+        // 发送到服务器
+        async function sendToServer(audioBlob) {
+            const formData = new FormData();
+            formData.append('file', audioBlob, 'recording.pcm');
+            formData.append('userId', document.getElementById('userId').value);
+            formData.append('visitId', document.getElementById('visitId').value);
+            formData.append('audioEncode', 'pcm_s16le');
+            formData.append('sampleRate', '16000');
+            formData.append('lang', document.getElementById('language').value);
+            
+            const domain = document.getElementById('domain').value;
+            if (domain) {
+                formData.append('pd', domain);
+            }
+
+            try {
+                const response = await fetch('/api/transcription/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                }
+
+                const data = await response.json();
+                
+                console.log('服务器响应:', data);
+                if (data.status === 'SUCCESS') {
+                    const transcriptionText = data.transcriptionText || data.fullText || '';
+                    result.textContent = transcriptionText || '(无转录内容)';
+                    updateStatus('ready', '转录完成');
+                    console.log('转录成功:', transcriptionText);
+                    
+                    // 启用语音播报和病历总结按钮
+                    if (transcriptionText) {
+                        document.getElementById('speakBtn').disabled = false;
+                        document.getElementById('generateSummaryBtn').disabled = false;
+                        document.getElementById('getSummaryBtn').disabled = false;
+                    }
+                } else {
+                    throw new Error(data.message || data.errorMessage || '转录失败');
+                }
+
+            } catch (error) {
+                console.error('发送失败:', error);
+                updateStatus('error', '转录失败: ' + error.message);
+                result.textContent = '转录失败: ' + error.message;
+            }
+        }
+
+        // 计时器
+        function startTimer() {
+            startTime = Date.now();
+            timer.style.display = 'block';
+            timerInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                const minutes = Math.floor(elapsed / 60).toString().padStart(2, '0');
+                const seconds = (elapsed % 60).toString().padStart(2, '0');
+                timer.textContent = `${minutes}:${seconds}`;
+            }, 1000);
+        }
+
+        function stopTimer() {
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            timer.style.display = 'none';
+        }
+
+        // 音频可视化
+        function startVisualizer() {
+            initVisualizer();
+            visualizer.style.display = 'flex';
+            
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            
+            visualizerInterval = setInterval(() => {
+                if (!isRecording) return;
+                
+                analyser.getByteFrequencyData(dataArray);
+                const bars = visualizer.querySelectorAll('.bar');
+                
+                bars.forEach((bar, index) => {
+                    const value = dataArray[Math.floor(index * bufferLength / bars.length)];
+                    const height = Math.max(5, (value / 255) * 50);
+                    bar.style.height = height + 'px';
+                });
+            }, 50);
+        }
+
+        function stopVisualizer() {
+            if (visualizerInterval) {
+                clearInterval(visualizerInterval);
+                visualizerInterval = null;
+            }
+            visualizer.style.display = 'none';
+        }
+
+        // 事件监听
+        recordBtn.addEventListener('click', () => {
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        });
+
+        // 空格键快捷录音
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') {
+                e.preventDefault();
+                recordBtn.click();
+            }
+        });
+
+        // 语音播报功能
+        document.getElementById('speakBtn').addEventListener('click', async () => {
+            const text = result.textContent;
+            if (!text || text === '等待录音...' || text === '(无转录内容)') {
+                alert('没有可播报的文本');
+                return;
+            }
+
+            const speakBtn = document.getElementById('speakBtn');
+            
+            try {
+                // 调用后端TTS接口
+                speakBtn.textContent = '🔄 正在处理...';
+                speakBtn.disabled = true;
+                
+                const response = await fetch('/api/tts/speak', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text: text })
+                });
+
+                const data = await response.json();
+                
+                if (data.status === 'SUCCESS') {
+                    // 播放提示音并使用浏览器TTS
+                    if (data.audioUrl) {
+                        const audio = new Audio(data.audioUrl);
+                        audio.play().catch(e => console.log('提示音播放失败:', e));
+                    }
+                    
+                    // 使用浏览器TTS播报文本
+                    if ('speechSynthesis' in window) {
+                        speechSynthesis.cancel();
+                        
+                        const utterance = new SpeechSynthesisUtterance(text);
+                        utterance.lang = 'zh-CN';
+                        utterance.rate = 0.8;
+                        utterance.pitch = 1;
+                        utterance.volume = 1;
+                        
+                        utterance.onstart = () => {
+                            speakBtn.textContent = '🔇 停止播报';
+                            speakBtn.style.background = '#dc3545';
+                            speakBtn.disabled = false;
+                        };
+                        
+                        utterance.onend = () => {
+                            speakBtn.textContent = '🔊 语音播报';
+                            speakBtn.style.background = '#28a745';
+                        };
+                        
+                        utterance.onerror = (event) => {
+                            console.error('语音播报错误:', event);
+                            speakBtn.textContent = '🔊 语音播报';
+                            speakBtn.style.background = '#28a745';
+                            alert('语音播报失败');
+                        };
+                        
+                        speechSynthesis.speak(utterance);
+                    } else {
+                        speakBtn.textContent = '🔊 语音播报';
+                        speakBtn.disabled = false;
+                        alert('浏览器不支持语音播报功能');
+                    }
+                } else {
+                    throw new Error(data.message || '后端处理失败');
+                }
+                
+            } catch (error) {
+                console.error('语音播报失败:', error);
+                speakBtn.textContent = '🔊 语音播报';
+                speakBtn.style.background = '#28a745';
+                speakBtn.disabled = false;
+                alert('语音播报失败: ' + error.message);
+            }
+        });
+
+        // 点击停止播报
+        document.getElementById('speakBtn').addEventListener('click', (e) => {
+            if (e.target.textContent.includes('停止')) {
+                speechSynthesis.cancel();
+                document.getElementById('speakBtn').textContent = '🔊 语音播报';
+                document.getElementById('speakBtn').style.background = '#28a745';
+            }
+        });
+
+        // 检查转录记录
+        document.getElementById('checkTranscriptBtn').addEventListener('click', async () => {
+            const visitId = document.getElementById('visitId').value;
+            const summaryResult = document.getElementById('summaryResult');
+            
+            if (!visitId) {
+                alert('请输入visitId');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/transcription/visit/${encodeURIComponent(visitId)}`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    summaryResult.innerHTML = `<div style="color: #28a745;">✅ 找到转录记录</div><div style="margin-top: 10px; font-size: 12px; color: #666;">文本长度: ${data.transcriptText ? data.transcriptText.length : 0} 字符</div><div style="margin-top: 5px; max-height: 100px; overflow-y: auto; font-size: 12px; background: #f8f9fa; padding: 8px; border-radius: 4px;">${data.transcriptText || '无文本'}</div>`;
+                    document.getElementById('generateSummaryBtn').disabled = false;
+                    
+                    // 检查是否已有病历总结
+                    try {
+                        const summaryResponse = await fetch(`/api/medical-summary/visit/${encodeURIComponent(visitId)}`);
+                        if (summaryResponse.ok) {
+                            const summaryData = await summaryResponse.json();
+                            summaryResult.innerHTML += `<div style="margin-top: 10px; padding: 10px; background: #e7f3ff; border-radius: 4px; border-left: 4px solid #007bff;"><strong>ℹ️ 已存在病历总结</strong><br><small>创建时间: ${summaryData.createdAt}</small><br><button onclick="displayExistingSummary('${visitId}')" style="margin-top: 5px; padding: 3px 8px; font-size: 12px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer;">显示详情</button></div>`;
+                        }
+                    } catch (e) {
+                        // 忽略病历总结检查错误
+                    }
+                } else if (response.status === 404) {
+                    summaryResult.innerHTML = '<div style="color: #dc3545;">❌ 未找到转录记录，请先进行语音转录</div>';
+                } else {
+                    const errorText = await response.text();
+                    summaryResult.innerHTML = `<div style="color: #dc3545;">❌ 检查失败: ${errorText}</div>`;
+                }
+            } catch (error) {
+                console.error('检查转录记录失败:', error);
+                summaryResult.innerHTML = `<div style="color: #dc3545;">❌ 检查失败: ${error.message}</div>`;
+            }
+        });
+
+        // 生成病历总结
+        document.getElementById('generateSummaryBtn').addEventListener('click', async () => {
+            const visitId = document.getElementById('visitId').value;
+            const doctorId = 'doc_001';
+            const patientId = 'patient_001';
+            const summaryResult = document.getElementById('summaryResult');
+
+            if (!visitId) {
+                alert('请输入visitId');
+                return;
+            }
+
+            summaryResult.innerHTML = '<div style="color: #007bff;">🔄 正在生成病历总结...</div>';
+
+            try {
+                const url = `/api/medical-summary/generate/${encodeURIComponent(visitId)}?doctorId=${encodeURIComponent(doctorId)}&patientId=${encodeURIComponent(patientId)}`;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'text/event-stream',
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    console.error('后端错误响应:', errorText);
+                    throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let summaryContent = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+
+                                if (data.event === 'completed') {
+                                    summaryResult.innerHTML = `<div style="color: #28a745; font-weight: bold;">✅ 病历总结生成完成</div><div style="margin-top: 10px; white-space: pre-wrap; background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">${summaryContent}</div>`;
+                                    // 启用获取总结按钮
+                                    document.getElementById('getSummaryBtn').disabled = false;
+                                    return;
+                                } else if (data.event === 'error') {
+                                    summaryResult.innerHTML = `<div style="color: #dc3545;">❌ 生成失败: ${data.message}</div>`;
+                                    return;
+                                } else if (data.event === 'message' && data.content) {
+                                    summaryContent += data.content;
+                                    // 检查是否是JSON格式的病历总结
+                                    if (data.content.trim().startsWith('{') && data.content.includes('properties')) {
+                                        try {
+                                            const jsonData = JSON.parse(data.content);
+                                            if (jsonData.properties) {
+                                                let formattedSummary = '病历总结\n==========\n';
+                                                
+                                                if (jsonData.properties.symptom_details) {
+                                                    formattedSummary += '症状详情：\n' + jsonData.properties.symptom_details.description + '\n\n';
+                                                }
+                                                if (jsonData.properties.vital_signs) {
+                                                    formattedSummary += '生命体征：\n' + jsonData.properties.vital_signs.description + '\n\n';
+                                                }
+                                                if (jsonData.properties.past_medical_history) {
+                                                    formattedSummary += '既往病史：\n' + jsonData.properties.past_medical_history.description + '\n\n';
+                                                }
+                                                if (jsonData.properties.current_medications) {
+                                                    formattedSummary += '当前用药：\n' + jsonData.properties.current_medications.description + '\n\n';
+                                                }
+                                                
+                                                summaryResult.innerHTML = `<div style="color: #28a745; font-weight: bold;">✅ 病历总结生成完成</div><div style="margin-top: 10px; white-space: pre-wrap; background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">${formattedSummary}</div>`;
+                                                // 启用获取总结按钮
+                                                document.getElementById('getSummaryBtn').disabled = false;
+                                                return;
+                                            }
+                                        } catch (e) {
+                                            console.error('解析JSON病历总结失败:', e);
+                                        }
+                                    }
+                                    summaryResult.innerHTML = `<div style="color: #007bff;">🔄 正在生成...</div><div style="margin-top: 10px; white-space: pre-wrap;">${summaryContent}</div>`;
+                                }
+                            } catch (e) {
+                                console.error('解析SSE数据失败:', e, 'line:', line);
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                console.error('生成病历总结失败:', error);
+
+                // 获取详细错误信息
+                let errorMessage = error.message;
+                if (error.response) {
+                    try {
+                        const errorText = await error.response.text();
+                        errorMessage += ': ' + errorText;
+                    } catch (e) {
+                        // 忽略解析错误
+                    }
+                }
+
+                summaryResult.innerHTML = `<div style="color: #dc3545;">❌ 生成失败: ${errorMessage}</div>`;
+            }
+        });
+
+        // 获取已有病历总结
+        document.getElementById('getSummaryBtn').addEventListener('click', async () => {
+            const visitId = document.getElementById('visitId').value;
+            const summaryResult = document.getElementById('summaryResult');
+
+            if (!visitId) {
+                alert('请输入visitId');
+                return;
+            }
+
+            summaryResult.innerHTML = '<div style="color: #007bff;">🔄 正在获取病历总结...</div>';
+
+            try {
+                const response = await fetch(`/api/medical-summary/visit/${encodeURIComponent(visitId)}`);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    displaySummaryData(data);
+                } else if (response.status === 404) {
+                    summaryResult.innerHTML = '<div style="color: #dc3545;">❌ 未找到病历总结，请先生成</div>';
+                } else {
+                    const errorText = await response.text();
+                    summaryResult.innerHTML = `<div style="color: #dc3545;">❌ 获取失败: ${errorText}</div>`;
+                }
+            } catch (error) {
+                console.error('获取病历总结失败:', error);
+                summaryResult.innerHTML = `<div style="color: #dc3545;">❌ 获取失败: ${error.message}</div>`;
+            }
+        });
+
+        // 显示病历总结数据
+        function displaySummaryData(data) {
+            const summaryResult = document.getElementById('summaryResult');
+            const formattedSummary = `
+病历总结
+==========
+症状详情：
+${data.symptomDetails || '无'}
+
+生命体征：
+${data.vitalSigns || '无'}
+
+既往病史：
+${data.pastMedicalHistory || '无'}
+
+当前用药：
+${data.currentMedications || '无'}
+
+创建时间：${data.createdAt || '未知'}
+医生ID：${data.doctorId || '未知'}
+患者ID：${data.patientId || '未知'}
+            `;
+
+            summaryResult.innerHTML = `
+                <div style="color: #28a745; font-weight: bold;">✅ 病历总结</div>
+                <div style="margin-top: 10px; white-space: pre-wrap; background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745;">${formattedSummary}</div>
+            `;
+        }
+
+        // 显示已存在的病历总结（从检查转录按钮调用）
+        async function displayExistingSummary(visitId) {
+            try {
+                const response = await fetch(`/api/medical-summary/visit/${encodeURIComponent(visitId)}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    displaySummaryData(data);
+                } else {
+                    alert('获取病历总结失败');
+                }
+            } catch (error) {
+                console.error('获取病历总结失败:', error);
+                alert('获取病历总结失败: ' + error.message);
+            }
+        }
+        window.addEventListener('load', async () => {
+            try {
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+                updateStatus('ready', '准备就绪 - 点击开始录音');
+            } catch (error) {
+                updateStatus('error', '无法访问麦克风，请检查权限设置');
+            }
+        });
+    </script>
+</body>
+</html>

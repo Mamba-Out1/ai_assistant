@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>病历总结功能验证</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #333; margin-bottom: 30px; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 5px; background: #fafafa; }
+        .test-btn { padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
+        .test-btn:hover { background: #0056b3; }
+        .test-btn.success { background: #28a745; }
+        .test-btn.danger { background: #dc3545; }
+        .result { margin: 15px 0; padding: 15px; border-radius: 5px; min-height: 50px; }
+        .success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+        .error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+        .info { background: #cce7ff; color: #004085; border: 1px solid #b3d7ff; }
+        .warning { background: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }
+        input[type="text"] { padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin: 5px; width: 200px; }
+        pre { background: #f8f9fa; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+        .summary-display { background: #f8f9fa; padding: 15px; border-radius: 5px; border-left: 4px solid #28a745; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏥 病历总结功能验证</h1>
+        
+        <!-- 测试配置 -->
+        <div class="test-section">
+            <h3>测试配置</h3>
+            <label>visitId: </label>
+            <input type="text" id="testVisitId" value="visit_001" placeholder="输入visitId">
+            <button class="test-btn" onclick="setRandomVisitId()">随机生成</button>
+        </div>
+
+        <!-- 步骤1：准备测试数据 -->
+        <div class="test-section">
+            <h3>步骤1：准备测试数据</h3>
+            <p>创建测试用的转录记录和病历总结数据</p>
+            <button class="test-btn" onclick="createTestTranscript()">创建测试转录</button>
+            <button class="test-btn" onclick="createTestSummary()">创建测试病历总结</button>
+            <button class="test-btn danger" onclick="cleanupTestData()">清理测试数据</button>
+            <div id="step1-result" class="result info">等待操作...</div>
+        </div>
+
+        <!-- 步骤2：测试获取病历总结 -->
+        <div class="test-section">
+            <h3>步骤2：测试获取病历总结</h3>
+            <p>测试从数据库获取已保存的病历总结</p>
+            <button class="test-btn" onclick="getSummary()">获取病历总结</button>
+            <button class="test-btn" onclick="checkSummaryExists()">检查是否存在</button>
+            <div id="step2-result" class="result info">等待测试...</div>
+        </div>
+
+        <!-- 步骤3：测试生成病历总结 -->
+        <div class="test-section">
+            <h3>步骤3：测试生成病历总结（流式）</h3>
+            <p>测试通过转录文本生成新的病历总结</p>
+            <button class="test-btn" onclick="generateSummary()">生成病历总结</button>
+            <div id="step3-result" class="result info">等待测试...</div>
+        </div>
+
+        <!-- 步骤4：查看所有数据 -->
+        <div class="test-section">
+            <h3>步骤4：查看所有数据（调试）</h3>
+            <p>查看数据库中的所有病历总结和转录记录</p>
+            <button class="test-btn" onclick="viewAllSummaries()">查看所有病历总结</button>
+            <button class="test-btn" onclick="viewAllTranscripts()">查看所有转录记录</button>
+            <div id="step4-result" class="result info">等待查看...</div>
+        </div>
+    </div>
+
+    <script>
+        // 设置随机visitId
+        function setRandomVisitId() {
+            const randomId = 'test_visit_' + Date.now();
+            document.getElementById('testVisitId').value = randomId;
+        }
+
+        // 获取当前visitId
+        function getCurrentVisitId() {
+            return document.getElementById('testVisitId').value || 'visit_001';
+        }
+
+        // 创建测试转录记录
+        async function createTestTranscript() {
+            const resultDiv = document.getElementById('step1-result');
+            const visitId = getCurrentVisitId();
+            
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '🔄 正在创建测试转录记录...';
+
+            try {
+                const response = await fetch(`/api/test/create-test-transcript?visitId=${encodeURIComponent(visitId)}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+                
+                if (data.status === 'SUCCESS') {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `✅ ${data.message}<br>transcriptId: ${data.transcriptId}`;
+                } else if (data.status === 'EXISTS') {
+                    resultDiv.className = 'result warning';
+                    resultDiv.innerHTML = `⚠️ ${data.message}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ 创建失败: ${data.message}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ 请求失败: ${error.message}`;
+            }
+        }
+
+        // 创建测试病历总结
+        async function createTestSummary() {
+            const resultDiv = document.getElementById('step1-result');
+            const visitId = getCurrentVisitId();
+            
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '🔄 正在创建测试病历总结...';
+
+            try {
+                const response = await fetch(`/api/test/create-test-summary?visitId=${encodeURIComponent(visitId)}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+                
+                if (data.status === 'SUCCESS') {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `✅ ${data.message}<br>summaryId: ${data.summaryId}`;
+                } else if (data.status === 'EXISTS') {
+                    resultDiv.className = 'result warning';
+                    resultDiv.innerHTML = `⚠️ ${data.message}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ 创建失败: ${data.message}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ 请求失败: ${error.message}`;
+            }
+        }
+
+        // 清理测试数据
+        async function cleanupTestData() {
+            const resultDiv = document.getElementById('step1-result');
+            const visitId = getCurrentVisitId();
+            
+            if (!confirm(`确定要清理visitId=${visitId}的测试数据吗？`)) {
+                return;
+            }
+            
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '🔄 正在清理测试数据...';
+
+            try {
+                const response = await fetch(`/api/test/cleanup/${encodeURIComponent(visitId)}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+                
+                if (data.status === 'SUCCESS') {
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `✅ ${data.message}`;
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ 清理失败: ${data.message}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ 请求失败: ${error.message}`;
+            }
+        }
+
+        // 获取病历总结
+        async function getSummary() {
+            const resultDiv = document.getElementById('step2-result');
+            const visitId = getCurrentVisitId();
+            
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '🔄 正在获取病历总结...';
+
+            try {
+                const response = await fetch(`/api/medical-summary/visit/${encodeURIComponent(visitId)}`);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.className = 'result success';
+                    
+                    const summaryHtml = `
+                        <strong>✅ 获取成功！</strong><br>
+                        <strong>summaryId:</strong> ${data.summaryId}<br>
+                        <strong>visitId:</strong> ${data.visitId}<br>
+                        <strong>doctorId:</strong> ${data.doctorId}<br>
+                        <strong>patientId:</strong> ${data.patientId}<br>
+                        <strong>创建时间:</strong> ${data.createdAt}<br><br>
+                        <div class="summary-display">
+病历总结
+==========
+症状详情：
+${data.symptomDetails}
+
+生命体征：
+${data.vitalSigns}
+
+既往病史：
+${data.pastMedicalHistory}
+
+当前用药：
+${data.currentMedications}
+                        </div>
+                    `;
+                    
+                    resultDiv.innerHTML = summaryHtml;
+                } else if (response.status === 404) {
+                    resultDiv.className = 'result warning';
+                    resultDiv.innerHTML = '⚠️ 未找到病历总结，请先创建测试数据或生成病历总结';
+                } else {
+                    const errorText = await response.text();
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ 获取失败: HTTP ${response.status} - ${errorText}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ 请求失败: ${error.message}`;
+            }
+        }
+
+        // 检查病历总结是否存在
+        async function checkSummaryExists() {
+            const resultDiv = document.getElementById('step2-result');
+            const visitId = getCurrentVisitId();
+            
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '🔄 正在检查病历总结...';
+
+            try {
+                const response = await fetch(`/api/medical-summary/visit/${encodeURIComponent(visitId)}`);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.className = 'result success';
+                    resultDiv.innerHTML = `✅ 病历总结存在<br>summaryId: ${data.summaryId}<br>创建时间: ${data.createdAt}`;
+                } else if (response.status === 404) {
+                    resultDiv.className = 'result warning';
+                    resultDiv.innerHTML = '⚠️ 病历总结不存在';
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ 检查失败: HTTP ${response.status}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ 请求失败: ${error.message}`;
+            }
+        }
+
+        // 生成病历总结
+        async function generateSummary() {
+            const resultDiv = document.getElementById('step3-result');
+            const visitId = getCurrentVisitId();
+            const doctorId = 'test_doctor_001';
+            const patientId = 'test_patient_001';
+            
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '🔄 正在生成病历总结...';
+
+            try {
+                const url = `/api/medical-summary/generate/${encodeURIComponent(visitId)}?doctorId=${encodeURIComponent(doctorId)}&patientId=${encodeURIComponent(patientId)}`;
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Accept': 'text/event-stream',
+                        'Cache-Control': 'no-cache'
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let summaryContent = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+
+                                if (data.event === 'completed') {
+                                    resultDiv.className = 'result success';
+                                    resultDiv.innerHTML = `
+                                        <strong>✅ 病历总结生成完成</strong><br>
+                                        <div class="summary-display">${summaryContent}</div>
+                                    `;
+                                    return;
+                                } else if (data.event === 'error') {
+                                    resultDiv.className = 'result error';
+                                    resultDiv.innerHTML = `❌ 生成失败: ${data.message}`;
+                                    return;
+                                } else if (data.event === 'message' && data.content) {
+                                    summaryContent += data.content;
+                                    resultDiv.innerHTML = `🔄 正在生成...<br><div style="max-height: 200px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 4px; white-space: pre-wrap;">${summaryContent}</div>`;
+                                }
+                            } catch (e) {
+                                console.error('解析SSE数据失败:', e);
+                            }
+                        }
+                    }
+                }
+
+            } catch (error) {
+                console.error('生成病历总结失败:', error);
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ 生成失败: ${error.message}`;
+            }
+        }
+
+        // 查看所有病历总结
+        async function viewAllSummaries() {
+            const resultDiv = document.getElementById('step4-result');
+            
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '🔄 正在获取所有病历总结...';
+
+            try {
+                const response = await fetch('/api/test/summaries');
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.className = 'result success';
+                    
+                    if (data.length === 0) {
+                        resultDiv.innerHTML = '📋 数据库中没有病历总结记录';
+                    } else {
+                        let html = `<strong>📋 找到 ${data.length} 条病历总结记录：</strong><br><br>`;
+                        data.forEach((summary, index) => {
+                            html += `
+                                <div style="border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 4px; background: white;">
+                                    <strong>${index + 1}. visitId: ${summary.visitId}</strong><br>
+                                    summaryId: ${summary.summaryId}<br>
+                                    doctorId: ${summary.doctorId}<br>
+                                    patientId: ${summary.patientId}<br>
+                                    创建时间: ${summary.createdAt}<br>
+                                    <details style="margin-top: 5px;">
+                                        <summary>查看详情</summary>
+                                        <pre style="font-size: 11px; max-height: 150px; overflow-y: auto;">症状详情: ${summary.symptomDetails}
+生命体征: ${summary.vitalSigns}
+既往病史: ${summary.pastMedicalHistory}
+当前用药: ${summary.currentMedications}</pre>
+                                    </details>
+                                </div>
+                            `;
+                        });
+                        resultDiv.innerHTML = html;
+                    }
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ 获取失败: HTTP ${response.status}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ 请求失败: ${error.message}`;
+            }
+        }
+
+        // 查看所有转录记录
+        async function viewAllTranscripts() {
+            const resultDiv = document.getElementById('step4-result');
+            
+            resultDiv.className = 'result info';
+            resultDiv.innerHTML = '🔄 正在获取所有转录记录...';
+
+            try {
+                const response = await fetch('/api/test/transcripts');
+
+                if (response.ok) {
+                    const data = await response.json();
+                    resultDiv.className = 'result success';
+                    
+                    if (data.length === 0) {
+                        resultDiv.innerHTML = '📋 数据库中没有转录记录';
+                    } else {
+                        let html = `<strong>📋 找到 ${data.length} 条转录记录：</strong><br><br>`;
+                        data.forEach((transcript, index) => {
+                            html += `
+                                <div style="border: 1px solid #ddd; padding: 10px; margin: 10px 0; border-radius: 4px; background: white;">
+                                    <strong>${index + 1}. visitId: ${transcript.visitId}</strong><br>
+                                    transcriptId: ${transcript.transcriptId}<br>
+                                    状态: ${transcript.status}<br>
+                                    音频时长: ${transcript.audioDuration}秒<br>
+                                    音频格式: ${transcript.audioFormat}<br>
+                                    创建时间: ${transcript.createdAt}<br>
+                                    <details style="margin-top: 5px;">
+                                        <summary>查看转录文本</summary>
+                                        <pre style="font-size: 11px; max-height: 150px; overflow-y: auto;">${transcript.transcriptText}</pre>
+                                    </details>
+                                </div>
+                            `;
+                        });
+                        resultDiv.innerHTML = html;
+                    }
+                } else {
+                    resultDiv.className = 'result error';
+                    resultDiv.innerHTML = `❌ 获取失败: HTTP ${response.status}`;
+                }
+            } catch (error) {
+                resultDiv.className = 'result error';
+                resultDiv.innerHTML = `❌ 请求失败: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>
