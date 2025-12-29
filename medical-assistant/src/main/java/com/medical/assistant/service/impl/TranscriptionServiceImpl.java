@@ -377,6 +377,80 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     }
 
     @Override
+    public Flux<String> generateChiefComplaintStream(String visitId, String transcriptText,
+                                                     String doctorId, String patientId) {
+
+        logger.info("【病情概要】开始生成，visitId: {}", visitId);
+        
+        return difyService.generateMedicalSummaryStream(transcriptText, doctorId, visitId)
+                .doOnNext(response -> {
+                    logger.info("【病情概要】收到响应: event={}, answer存在={}", 
+                            response.getEvent(), response.getAnswer() != null);
+                })
+                .filter(response -> response != null && response.getAnswer() != null)
+                .flatMap(response -> {
+                    if ("message".equals(response.getEvent())) {
+                        String content = response.getAnswer();
+                        logger.info("【病情概要】处理message事件，内容长度: {}", content.length());
+                        
+                        // 检查是否是JSON格式的病情概要
+                        if (content.trim().startsWith("{")) {
+                            logger.info("【病情概要】检测到JSON格式，开始保存到visits表");
+                            try {
+                                saveChiefComplaintToVisit(visitId, content);
+                                logger.info("【病情概要】保存成功");
+                            } catch (Exception e) {
+                                logger.error("保存病情概要失败", e);
+                            }
+                        }
+                        return Flux.just(content);
+                    } else if ("workflow_finished".equals(response.getEvent())) {
+                        logger.info("【病情概要】工作流已完成");
+                        if (response.getAnswer() != null && response.getAnswer().contains("{")) {
+                            try {
+                                logger.info("【病情概要】工作流完成，尝试保存最终结果");
+                                saveChiefComplaintToVisit(visitId, response.getAnswer());
+                                logger.info("【病情概要】工作流完成状态下保存成功");
+                            } catch (Exception e) {
+                                logger.error("工作流完成时保存病情概要失败", e);
+                            }
+                        }
+                        return Flux.just(response.getAnswer());
+                    }
+                    logger.debug("【病情概要】跳过事件: {}", response.getEvent());
+                    return Flux.empty();
+                })
+                .concatWith(Flux.just("[COMPLETED]"))
+                .doOnError(error -> logger.error("【病情概要】流处理错误", error))
+                .doOnComplete(() -> logger.info("【病情概要】流处理完成"));
+    }
+
+    /**
+     * 保存病情概要到visits表的chief_complaint字段
+     */
+    private void saveChiefComplaintToVisit(String visitId, String chiefComplaintJson) {
+        try {
+            logger.info("【数据库】开始保存病情概要到visits表，visitId: {}", visitId);
+            
+            visitRepository.findByVisitId(visitId).ifPresentOrElse(
+                visit -> {
+                    visit.setChiefComplaint(chiefComplaintJson);
+                    visitRepository.save(visit);
+                    logger.info("【数据库】病情概要保存成功，visitId: {}", visitId);
+                },
+                () -> {
+                    logger.warn("【数据库】未找到visitId={}的访问记录", visitId);
+                    throw new RuntimeException("未找到访问记录: " + visitId);
+                }
+            );
+
+        } catch (Exception e) {
+            logger.error("保存病情概要失败", e);
+            throw new RuntimeException("保存病情概要失败", e);
+        }
+    }
+
+    @Override
     public void saveMedicalSummary(MedicalSummaryDto summaryDto) {
         try {
             logger.info("【数据库】开始保存病历总结，visitId: {}, doctorId: {}, patientId: {}", 

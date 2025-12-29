@@ -56,6 +56,11 @@ public interface TranscriptionService {
     Flux<String> generateMedicalSummaryStream(String visitId, String transcriptText, String doctorId, String patientId);
 
     /**
+     * 调用智能体生成病情概要（流式）
+     */
+    Flux<String> generateChiefComplaintStream(String visitId, String transcriptText, String doctorId, String patientId);
+
+    /**
      * 保存病历总结
      */
     void saveMedicalSummary(MedicalSummaryDto summaryDto);

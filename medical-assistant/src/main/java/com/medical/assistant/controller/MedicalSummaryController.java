@@ -77,11 +77,11 @@ public class MedicalSummaryController {
                 visitId, doctorId, patientId);
 
         try {
-            // 获取转录文本
-            Transcript transcript = transcriptRepository.findByVisitId(visitId)
+            // 获取最新的转录文本
+            Transcript transcript = transcriptRepository.findLatestByVisitId(visitId)
                     .orElseThrow(() -> new RuntimeException("未找到visitId=" + visitId + "的转录记录"));
 
-            log.info("【病历总结】找到转录记录，文本长度: {}", 
+            log.info("【病历总结】找到最新转录记录，文本长度: {}", 
                     transcript.getTranscriptText() != null ? transcript.getTranscriptText().length() : 0);
 
             if (transcript.getTranscriptText() == null || transcript.getTranscriptText().isEmpty()) {
@@ -93,8 +93,8 @@ public class MedicalSummaryController {
         }
 
         try {
-            // 获取转录文本
-            Transcript transcript = transcriptRepository.findByVisitId(visitId).get();
+            // 获取最新的转录文本
+            Transcript transcript = transcriptRepository.findLatestByVisitId(visitId).get();
             
             // 调用智能体生成病历总结
             return transcriptionService.generateMedicalSummaryStream(
@@ -210,8 +210,8 @@ public class MedicalSummaryController {
     @PostMapping("/create")
     public ResponseEntity<Map<String, String>> createMedicalSummary(@RequestBody MedicalSummaryRequest request) {
         try {
-            // 获取转录文本
-            Transcript transcript = transcriptRepository.findByVisitId(request.getVisitId())
+            // 获取最新的转录文本
+            Transcript transcript = transcriptRepository.findLatestByVisitId(request.getVisitId())
                     .orElseThrow(() -> new RuntimeException("未找到转录记录"));
 
             // 同步调用生成病历总结
