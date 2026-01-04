@@ -18,6 +18,9 @@ public class Visit {
     @Column(name = "patient_id", nullable = false, length = 100)
     private String patientId;
 
+    @Column(name = "patient_name", length = 100)
+    private String patientName;
+
     @Column(name = "doctor_id", length = 100)
     private String doctorId;
 
