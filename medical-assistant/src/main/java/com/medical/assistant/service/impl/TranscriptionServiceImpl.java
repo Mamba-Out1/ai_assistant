@@ -382,7 +382,7 @@ public class TranscriptionServiceImpl implements TranscriptionService {
 
         logger.info("【病情概要】开始生成，visitId: {}", visitId);
         
-        return difyService.generateMedicalSummaryStream(transcriptText, doctorId, visitId)
+        return difyService.generateChiefComplaintStream(transcriptText, doctorId, visitId)
                 .doOnNext(response -> {
                     logger.info("【病情概要】收到响应: event={}, answer存在={}", 
                             response.getEvent(), response.getAnswer() != null);
@@ -426,18 +426,25 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     }
 
     /**
-     * 保存病情概要到visits表的chief_complaint字段
+     * 保存病情概要到visits表的chief_complaint和notes字段
      */
     private void saveChiefComplaintToVisit(String visitId, String chiefComplaintJson) {
         try {
             logger.info("【数据库】开始保存病情概要到visits表，visitId: {}", visitId);
             
+            // 解析JSON获取chief_complaint和notes字段
+            com.google.gson.JsonObject jsonObject = com.google.gson.JsonParser.parseString(chiefComplaintJson).getAsJsonObject();
+            String chiefComplaint = jsonObject.has("chief_complaint") ? jsonObject.get("chief_complaint").getAsString() : null;
+            String notes = jsonObject.has("notes") ? jsonObject.get("notes").getAsString() : null;
+            
             Optional<com.medical.assistant.model.entity.Visit> visitOpt = visitRepository.findByVisitId(visitId);
             if (visitOpt.isPresent()) {
                 com.medical.assistant.model.entity.Visit visit = visitOpt.get();
-                visit.setChiefComplaint(chiefComplaintJson);
+                visit.setChiefComplaint(chiefComplaint);
+                visit.setNotes(notes);
                 visitRepository.save(visit);
-                logger.info("【数据库】病情概要保存成功，visitId: {}", visitId);
+                logger.info("【数据库】病情概要保存成功，visitId: {}, chief_complaint: {}, notes: {}", 
+                    visitId, chiefComplaint, notes);
             } else {
                 logger.warn("【数据库】未找到visitId={}的访问记录", visitId);
                 throw new RuntimeException("未找到访问记录: " + visitId);

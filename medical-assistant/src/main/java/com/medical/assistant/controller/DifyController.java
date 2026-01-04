@@ -89,7 +89,7 @@ public class DifyController {
                             log.error("【病情概要】推送错误事件: {}", content);
                             return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7) + "\"}\n\n";
                         } else if (content.trim().startsWith("{")) {
-                            // 这是JSON格式的病情概要，直接推送
+                            // 这是JSON格式的病情概要（chief_complaint和notes），直接推送
                             log.info("【病情概要】推送JSON格式病情概要，长度: {}", content.length());
                             return "data: {\"event\": \"message\", \"content\": " + content.replace("\n", "").replace("  ", "") + "}\n\n";
                         } else {

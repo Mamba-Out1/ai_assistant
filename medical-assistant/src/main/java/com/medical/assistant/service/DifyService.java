@@ -12,6 +12,11 @@ public interface DifyService {
     Flux<DifyChatResponse> generateMedicalSummaryStream(String transcriptText, String userId, String conversationId);
 
     /**
+     * 流式调用Dify智能体生成病情概要
+     */
+    Flux<DifyChatResponse> generateChiefComplaintStream(String transcriptText, String userId, String conversationId);
+
+    /**
      * 从流式响应中提取病历总结
      */
     MedicalSummaryDto extractMedicalSummary(String completeResponse);

@@ -166,6 +166,76 @@ public class DifyServiceImpl implements DifyService {
     }
     
     @Override
+    public Flux<DifyChatResponse> generateChiefComplaintStream(String transcriptText, String userId, String conversationId) {
+        log.info("【Dify API - 病情概要】开始调用，文本长度: {}, 用户ID: {}", transcriptText.length(), userId);
+        
+        if (this.normalizedApiKey == null || this.normalizedApiKey.isEmpty()) {
+            log.error("【Dify API - 病情概要】未配置 API Key");
+            return Flux.just(createErrorResponse("Dify API key 未配置"));
+        }
+
+        DifyChatRequest request = new DifyChatRequest();
+        request.setInputs(new HashMap<>()); 
+        request.setQuery("请根据以下语音转录内容生成病情概要：" + transcriptText);
+        request.setResponseMode("streaming");
+        request.setConversationId(""); 
+        request.setUser(userId != null ? userId : "medical_assistant");
+        request.setFiles(null);
+
+        return webClient.post()
+                .uri("/chat-messages")
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(request)
+                .accept(MediaType.TEXT_EVENT_STREAM)
+                .retrieve()
+                .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(), 
+                    response -> {
+                        return response.bodyToMono(String.class)
+                            .map(errorBody -> {
+                                log.error("【Dify API - 病情概要】调用失败: {} - {}", response.statusCode(), errorBody);
+                                return new RuntimeException("Dify API调用失败: " + response.statusCode() + " - " + errorBody);
+                            });
+                    })
+                .bodyToFlux(String.class)
+                .timeout(java.time.Duration.ofSeconds(30))
+                .filter(data -> {
+                    String trimmed = data.trim();
+                    if (trimmed.isEmpty() || trimmed.equals("[DONE]") || trimmed.equals("data: [DONE]")) {
+                        return false;
+                    }
+                    return trimmed.startsWith("data: ") || trimmed.startsWith("{");
+                })
+                .map(data -> {
+                    try {
+                        String jsonStr = data.trim();
+                        if (jsonStr.startsWith("data: ")) {
+                            jsonStr = jsonStr.substring(6);
+                        }
+                        
+                        DifyChatResponse response = objectMapper.readValue(jsonStr, DifyChatResponse.class);
+                        
+                        if (response.getAnswer() != null) {
+                            String unescapedJson = response.getAnswer()
+                                    .replace("&quot;", "\"")
+                                    .replace("&amp;", "&")
+                                    .replace("&lt;", "<")
+                                    .replace("&gt;", ">")
+                                    .replace("\\n", "\n")
+                                    .replace("\\\"", "\"");
+                            response.setAnswer(unescapedJson);
+                        }
+                        
+                        return response;
+                    } catch (Exception e) {
+                        log.error("解析Dify响应失败: {}", data, e);
+                        return null;
+                    }
+                })
+                .filter(response -> response != null)
+                .onErrorReturn(createErrorResponse("调用Dify API失败"));
+    }
+    
+    @Override
     public Flux<DifyChatResponse> chatWithDify(String userInput, String userId, String conversationId) {
         log.info("【Dify AI对话】开始调用，用户输入长度: {}, 用户ID: {}", userInput.length(), userId);
         
