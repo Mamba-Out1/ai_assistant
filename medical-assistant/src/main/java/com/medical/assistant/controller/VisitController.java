@@ -1,5 +1,6 @@
 package com.medical.assistant.controller;
 
+import com.medical.assistant.model.dto.VisitRegistrationRequest;
 import com.medical.assistant.model.entity.Visit;
 import com.medical.assistant.repository.VisitRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -7,7 +8,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Random;
 
 @Slf4j
 @RestController
@@ -79,17 +83,61 @@ public class VisitController {
     }
 
     /**
-     * 根据患者姓名模糊查询患者信息
+     * 患者挂号
      */
-    @GetMapping("/search/patient-name")
-    public ResponseEntity<List<Visit>> searchVisitsByPatientName(@RequestParam String patientName) {
+    @PostMapping("/register")
+    public ResponseEntity<Visit> registerVisit(@RequestBody VisitRegistrationRequest request) {
         try {
-            List<Visit> visits = visitRepository.findByPatientNameContaining(patientName);
-            log.info("模糊查询患者姓名包含{}的信息成功，共{}条记录", patientName, visits.size());
-            return ResponseEntity.ok(visits);
+            Visit visit = new Visit();
+            
+            // 使用传入的visit_id
+            visit.setVisitId(request.getVisitId());
+            
+            // 随机分配医生ID (doctor_001~doctor_003)
+            String doctorId = "doctor_" + String.format("%03d", new Random().nextInt(3) + 1);
+            visit.setDoctorId(doctorId);
+            
+            // 设置患者信息
+            visit.setPatientId(request.getPatientId());
+            visit.setPatientName(request.getPatientName());
+            visit.setVisitType(request.getVisitType());
+            visit.setVisitDate(request.getVisitDate());
+            visit.setChiefComplaint(request.getChiefComplaint());
+            visit.setNotes(request.getNotes());
+            visit.setStatus(Visit.VisitStatus.IN_PROGRESS);
+            
+            Visit savedVisit = visitRepository.save(visit);
+            log.info("患者挂号成功，visit_id: {}, 分配医生: {}", request.getVisitId(), doctorId);
+            return ResponseEntity.ok(savedVisit);
         } catch (Exception e) {
-            log.error("模糊查询患者姓名包含{}的信息失败", patientName, e);
+            log.error("患者挂号失败", e);
             return ResponseEntity.internalServerError().build();
         }
     }
-}
+    /**
+     * 获取下一个visit_id
+     */
+    @GetMapping("/next-visit-id")
+    public ResponseEntity<Map<String, String>> getNextVisitId() {
+        try {
+            String nextVisitId = generateNextVisitId();
+            Map<String, String> result = new HashMap<>();
+            result.put("nextVisitId", nextVisitId);
+            log.info("生成下一个visit_id成功: {}", nextVisitId);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            log.error("生成下一个visit_id失败", e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+    
+    private String generateNextVisitId() {
+        List<String> visitIds = visitRepository.findAllVisitIdsOrderByDesc();
+        if (visitIds.isEmpty()) {
+            return "visit_001";
+        }
+
+        String latestVisitId = visitIds.get(0);
+        int currentNumber = Integer.parseInt(latestVisitId.substring(6));
+        return "visit_" + String.format("%03d", currentNumber + 1);
+    }}

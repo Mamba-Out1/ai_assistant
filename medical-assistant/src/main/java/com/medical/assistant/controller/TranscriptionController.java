@@ -36,8 +36,8 @@ public class TranscriptionController {
     @PostMapping("/upload")
     public ResponseEntity<TranscriptionResponse> uploadAndTranscribe(
             @RequestParam("file") MultipartFile file,
+            @RequestParam("visitId") String visitId,
             @RequestParam(value = "userId", required = false) String userId,
-            @RequestParam(value = "visitId", required = false) String visitId,
             @RequestParam(value = "audioEncode", defaultValue = "pcm_s16le") String audioEncode,
             @RequestParam(value = "sampleRate", defaultValue = "16000") Integer sampleRate,
             @RequestParam(value = "lang", defaultValue = "autodialect") String lang,
@@ -81,7 +81,14 @@ public class TranscriptionController {
             @Valid @RequestBody TranscriptionRequest request) {
 
         try {
-            logger.info("开始流式转写，用户ID: {}", request.getUserId());
+            // 检查visitId是否存在
+            if (request.getVisitId() == null || request.getVisitId().trim().isEmpty()) {
+                Map<String, String> error = new HashMap<>();
+                error.put("error", "visitId为必填参数");
+                return ResponseEntity.badRequest().body(error);
+            }
+            
+            logger.info("开始流式转写，用户ID: {}, visitId: {}", request.getUserId(), request.getVisitId());
 
             String sessionId = transcriptionService.startStreamTranscription(request);
 

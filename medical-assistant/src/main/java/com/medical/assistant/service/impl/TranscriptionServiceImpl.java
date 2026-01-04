@@ -193,21 +193,18 @@ public class TranscriptionServiceImpl implements TranscriptionService {
 
             logger.info("【最终结果】转写文本长度: {}, 内容: {}", fullText.length(), fullText);
 
-            // 如果有visitId，保存转录结果到transcripts表
-            if (request.getVisitId() != null && !request.getVisitId().isEmpty()) {
-                // 计算音频时长
-                int audioDuration = audioData.length / (request.getSampleRate() * 2); // 16bit=2字节
+            // 使用传入的visitId保存转录结果到transcripts表
+            // 计算音频时长
+            int audioDuration = audioData.length / (request.getSampleRate() * 2); // 16bit=2字节
 
-                Transcript transcript = saveTranscript(
-                        request.getVisitId(),
-                        fullText,
-                        audioDuration,
-                        request.getAudioEncode()
-                );
-                logger.info("【数据库】转录结果已保存到transcripts表，ID: {}, 文本: {}", transcript.getTranscriptId(), fullText);
-            } else {
-                logger.info("【跳过保存】无visitId，不保存到数据库");
-            }
+            Transcript transcript = saveTranscript(
+                    request.getVisitId(),
+                    fullText,
+                    audioDuration,
+                    request.getAudioEncode()
+            );
+            logger.info("【数据库】转录结果已保存到transcripts表，ID: {}, visitId: {}, 文本: {}", 
+                transcript.getTranscriptId(), request.getVisitId(), fullText);
 
             // 返回响应 - 修复响应字段名
             TranscriptionResponse response = TranscriptionResponse.success(sessionId[0], fullText, null);
@@ -559,13 +556,12 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             @Override
             public void onTranscriptionComplete(String fullText) {
                 logger.info("【流式完成】文本长度: {}", fullText.length());
-                // 如果有visitId，保存转录结果
-                if (request.getVisitId() != null && !request.getVisitId().isEmpty()) {
-                    try {
-                        saveTranscript(request.getVisitId(), fullText, null, request.getAudioEncode());
-                    } catch (Exception e) {
-                        logger.error("保存流式转录结果失败", e);
-                    }
+                // 使用传入的visitId保存转录结果
+                try {
+                    saveTranscript(request.getVisitId(), fullText, null, request.getAudioEncode());
+                    logger.info("【流式转录】保存成功，visitId: {}", request.getVisitId());
+                } catch (Exception e) {
+                    logger.error("保存流式转录结果失败", e);
                 }
             }
 
