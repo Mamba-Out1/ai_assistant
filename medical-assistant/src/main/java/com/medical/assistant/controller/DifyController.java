@@ -33,16 +33,38 @@ public class DifyController {
         log.info("【Dify对话接口】收到请求: userInput={}, userId={}", userInput, userId);
         
         return difyService.chatWithDify(userInput, userId, conversationId)
-                .doOnNext(response -> log.info("【控制器】收到响应: event={}, answer={}", 
-                    response.getEvent(), response.getAnswer() != null ? "有内容" : "无内容"))
+                .doOnSubscribe(s -> log.info("【Dify对话】开始订阅流"))
+                .doOnNext(response -> log.info("【控制器】收到响应: event={}, answer={}, 完整内容: {}", 
+                    response.getEvent(), response.getAnswer() != null ? "有内容" : "无内容",
+                    response.getAnswer() != null ? response.getAnswer().substring(0, Math.min(200, response.getAnswer().length())) : "null"))
+                .doOnError(error -> log.error("【Dify对话】流处理错误", error))
+                .doOnComplete(() -> log.info("【控制器】流处理完成"))
                 .map(response -> {
-                    if (response.getAnswer() != null && !response.getAnswer().trim().isEmpty()) {
-                        return "data: " + response.getAnswer() + "\n\n";
+                    log.info("【Dify对话】处理事件: {}, answer长度: {}", 
+                            response.getEvent(), response.getAnswer() != null ? response.getAnswer().length() : 0);
+                    
+                    if ("message".equals(response.getEvent()) && response.getAnswer() != null) {
+                        String content = response.getAnswer();
+                        log.info("【Dify对话】返回消息内容: {}", content.substring(0, Math.min(100, content.length())));
+                        return "data: {\"event\": \"message\", \"content\": \"" + 
+                                content.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "") + "\"}\n\n";
+                    } else if ("message_end".equals(response.getEvent())) {
+                        log.info("【Dify对话】对话结束");
+                        return "data: {\"event\": \"completed\", \"message\": \"对话完成\"}\n\n";
+                    } else if ("error".equals(response.getEvent())) {
+                        log.error("【Dify对话】错误事件: {}", response.getAnswer());
+                        return "data: {\"event\": \"error\", \"message\": \"" + 
+                                (response.getAnswer() != null ? response.getAnswer().replace("\"", "\\\"") : "未知错误") + "\"}\n\n";
+                    } else {
+                        log.debug("【Dify对话】忽略事件: {}", response.getEvent());
+                        return "";
                     }
-                    return "";
                 })
                 .filter(data -> !data.isEmpty())
-                .doOnComplete(() -> log.info("【控制器】流处理完成"));
+                .onErrorResume(error -> {
+                    log.error("【Dify对话】处理失败", error);
+                    return Flux.just("data: {\"event\": \"error\", \"message\": \"" + error.getMessage().replace("\"", "\\\"") + "\"}\n\n");
+                });
     }
 
     @PostMapping(value = "/chief-complaint/{visitId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
