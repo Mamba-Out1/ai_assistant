@@ -434,6 +434,14 @@ public class TranscriptionServiceImpl implements TranscriptionService {
             String chiefComplaint = jsonObject.has("chief_complaint") ? jsonObject.get("chief_complaint").getAsString() : null;
             String notes = jsonObject.has("notes") ? jsonObject.get("notes").getAsString() : null;
             
+            // 如果为空，设置默认值
+            if (chiefComplaint == null || chiefComplaint.trim().isEmpty()) {
+                chiefComplaint = "暂未识别到患者主诉";
+            }
+            if (notes == null || notes.trim().isEmpty()) {
+                notes = "暂未识别到患者病情";
+            }
+            
             Optional<com.medical.assistant.model.entity.Visit> visitOpt = visitRepository.findByVisitId(visitId);
             if (visitOpt.isPresent()) {
                 com.medical.assistant.model.entity.Visit visit = visitOpt.get();

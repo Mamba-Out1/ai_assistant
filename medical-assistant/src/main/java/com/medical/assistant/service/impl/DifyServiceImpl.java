@@ -275,7 +275,7 @@ public class DifyServiceImpl implements DifyService {
                             });
                     })
                 .bodyToFlux(String.class)
-                .timeout(java.time.Duration.ofSeconds(60))
+                .timeout(java.time.Duration.ofSeconds(210))
                 .doOnSubscribe(s -> log.info("【Dify AI对话】开始订阅响应流"))
                 .doOnNext(data -> log.info("【Dify AI对话】收到原始数据: {}", data))
                 .doOnError(error -> log.error("【Dify AI对话】流处理错误", error))

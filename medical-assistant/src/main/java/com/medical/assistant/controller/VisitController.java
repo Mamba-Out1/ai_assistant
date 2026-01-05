@@ -85,29 +85,38 @@ public class VisitController {
     /**
      * 患者挂号
      */
-    @PostMapping("/register")
-    public ResponseEntity<Visit> registerVisit(@RequestBody VisitRegistrationRequest request) {
+    @PostMapping("/register/{patientId}/{patientName}/{visitDate}")
+    public ResponseEntity<Visit> registerVisit(
+            @PathVariable String patientId,
+            @PathVariable String patientName,
+            @PathVariable String visitDate) {
         try {
-            Visit visit = new Visit();
+            // 获取数据库中最新的visitId
+            List<String> visitIds = visitRepository.findAllVisitIdsOrderByDesc();
+            if (visitIds.isEmpty()) {
+                return ResponseEntity.badRequest().build();
+            }
+            String latestVisitId = visitIds.get(0);
             
-            // 使用传入的visit_id
-            visit.setVisitId(request.getVisitId());
+            // 查找对应的Visit记录
+            Visit visit = visitRepository.findByVisitId(latestVisitId).orElse(null);
+            if (visit == null) {
+                return ResponseEntity.notFound().build();
+            }
             
             // 随机分配医生ID (doctor_001~doctor_003)
             String doctorId = "doctor_" + String.format("%03d", new Random().nextInt(3) + 1);
-            visit.setDoctorId(doctorId);
             
-            // 设置患者信息
-            visit.setPatientId(request.getPatientId());
-            visit.setPatientName(request.getPatientName());
-            visit.setVisitType(request.getVisitType());
-            visit.setVisitDate(request.getVisitDate());
-            visit.setChiefComplaint(request.getChiefComplaint());
-            visit.setNotes(request.getNotes());
+            // 更新患者信息
+            visit.setPatientId(patientId);
+            visit.setPatientName(patientName);
+            visit.setDoctorId(doctorId);
+            visit.setVisitDate(java.time.LocalDate.parse(visitDate).atStartOfDay());
             visit.setStatus(Visit.VisitStatus.IN_PROGRESS);
             
             Visit savedVisit = visitRepository.save(visit);
-            log.info("患者挂号成功，visit_id: {}, 分配医生: {}", request.getVisitId(), doctorId);
+            log.info("患者挂号成功，visit_id: {}, 患者ID: {}, 患者姓名: {}, 就诊时间: {}, 分配医生: {}", 
+                latestVisitId, patientId, patientName, visitDate, doctorId);
             return ResponseEntity.ok(savedVisit);
         } catch (Exception e) {
             log.error("患者挂号失败", e);
@@ -117,27 +126,54 @@ public class VisitController {
     /**
      * 获取下一个visit_id
      */
-    @GetMapping("/next-visit-id")
-    public ResponseEntity<Map<String, String>> getNextVisitId() {
+    @GetMapping("/next-visit-id/{patientId}")
+    public ResponseEntity<Map<String, String>> getNextVisitId(@PathVariable String patientId) {
         try {
-            String nextVisitId = generateNextVisitId();
+            String visitId = getOrCreateNextVisitId(patientId);
             Map<String, String> result = new HashMap<>();
-            result.put("nextVisitId", nextVisitId);
-            log.info("生成下一个visit_id成功: {}", nextVisitId);
+            result.put("nextVisitId", visitId);
+            log.info("获取visit_id成功: {}, 患者ID: {}", visitId, patientId);
             return ResponseEntity.ok(result);
         } catch (Exception e) {
-            log.error("生成下一个visit_id失败", e);
+            log.error("获取visit_id失败", e);
             return ResponseEntity.internalServerError().build();
         }
     }
     
-    private String generateNextVisitId() {
+    private String getOrCreateNextVisitId(String patientId) {
         List<String> visitIds = visitRepository.findAllVisitIdsOrderByDesc();
-        if (visitIds.isEmpty()) {
-            return "visit_001";
+        
+        if (!visitIds.isEmpty()) {
+            String latestVisitId = visitIds.get(0);
+            // 检查最新visitId对应的记录的chiefComplaint和notes是否为空
+            Visit latestVisit = visitRepository.findByVisitId(latestVisitId).orElse(null);
+            if (latestVisit != null && 
+                (latestVisit.getChiefComplaint() == null || latestVisit.getChiefComplaint().trim().isEmpty()) &&
+                (latestVisit.getNotes() == null || latestVisit.getNotes().trim().isEmpty())) {
+                // 如果为空，使用这个visitId并更新患者ID
+                latestVisit.setPatientId(patientId);
+                visitRepository.save(latestVisit);
+                return latestVisitId;
+            }
         }
-
-        String latestVisitId = visitIds.get(0);
-        int currentNumber = Integer.parseInt(latestVisitId.substring(6));
-        return "visit_" + String.format("%03d", currentNumber + 1);
+        
+        // 生成下一个visitId并存入数据库
+        String nextVisitId;
+        if (visitIds.isEmpty()) {
+            nextVisitId = "visit_001";
+        } else {
+            String latestVisitId = visitIds.get(0);
+            int currentNumber = Integer.parseInt(latestVisitId.substring(6));
+            nextVisitId = "visit_" + String.format("%03d", currentNumber + 1);
+        }
+        
+        // 将新visitId存入visits表，设置患者ID
+        Visit newVisit = new Visit();
+        newVisit.setVisitId(nextVisitId);
+        newVisit.setPatientId(patientId);
+        newVisit.setChiefComplaint(null);
+        newVisit.setNotes(null);
+        visitRepository.save(newVisit);
+        
+        return nextVisitId;
     }}
