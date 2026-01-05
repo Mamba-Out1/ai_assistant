@@ -123,6 +123,28 @@ public class VisitController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+    /**
+     * 完成就诊
+     */
+    @PutMapping("/complete/{visitId}")
+    public ResponseEntity<Visit> completeVisit(@PathVariable String visitId) {
+        try {
+            Visit visit = visitRepository.findByVisitId(visitId).orElse(null);
+            if (visit == null) {
+                return ResponseEntity.notFound().build();
+            }
+            
+            visit.setStatus(Visit.VisitStatus.COMPLETED);
+            Visit savedVisit = visitRepository.save(visit);
+            log.info("就诊完成，visit_id: {}", visitId);
+            return ResponseEntity.ok(savedVisit);
+        } catch (Exception e) {
+            log.error("完成就诊失败，visit_id: {}", visitId, e);
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
     /**
      * 获取下一个visit_id
      */
