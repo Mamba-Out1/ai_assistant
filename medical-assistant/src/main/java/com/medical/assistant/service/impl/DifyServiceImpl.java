@@ -197,7 +197,7 @@ public class DifyServiceImpl implements DifyService {
                             });
                     })
                 .bodyToFlux(String.class)
-                .timeout(java.time.Duration.ofSeconds(30))
+                .timeout(java.time.Duration.ofSeconds(210))
                 .filter(data -> {
                     String trimmed = data.trim();
                     if (trimmed.isEmpty() || trimmed.equals("[DONE]") || trimmed.equals("data: [DONE]")) {
@@ -275,37 +275,44 @@ public class DifyServiceImpl implements DifyService {
                             });
                     })
                 .bodyToFlux(String.class)
-                .timeout(java.time.Duration.ofSeconds(210))
+                .timeout(java.time.Duration.ofSeconds(30))
                 .doOnSubscribe(s -> log.info("【Dify AI对话】开始订阅响应流"))
                 .doOnNext(data -> log.info("【Dify AI对话】收到原始数据: {}", data))
                 .doOnError(error -> log.error("【Dify AI对话】流处理错误", error))
                 .doOnComplete(() -> log.info("【Dify AI对话】流处理完成"))
-                .filter(chunk -> chunk != null && !chunk.trim().isEmpty())
-                .flatMap(chunk -> {
-                    // 按\n\n分割数据块
-                    String[] blocks = chunk.split("\n\n");
-                    return Flux.fromArray(blocks)
-                            .filter(block -> block != null && !block.trim().isEmpty());
+                .filter(data -> {
+                    String trimmed = data.trim();
+                    if (trimmed.isEmpty() || trimmed.equals("[DONE]") || trimmed.equals("data: [DONE]")) {
+                        return false;
+                    }
+                    return trimmed.startsWith("data: ") || trimmed.startsWith("{");
                 })
-                .filter(block -> block.startsWith("data: "))
-                .map(block -> {
+                .map(data -> {
                     try {
-                        String jsonStr = block.substring(6).trim(); // 移除 "data: " 前缀
-                        log.debug("【Dify AI对话】处理数据块: {}", jsonStr);
+                        String jsonStr = data.trim();
                         
-                        if (jsonStr.equals("[DONE]")) {
-                            // 流结束标记
-                            DifyChatResponse endResponse = new DifyChatResponse();
-                            endResponse.setEvent("message_end");
-                            return endResponse;
+                        if (jsonStr.startsWith("data: ")) {
+                            jsonStr = jsonStr.substring(6);
                         }
                         
                         DifyChatResponse response = objectMapper.readValue(jsonStr, DifyChatResponse.class);
-                        log.info("【Dify AI对话】成功解析响应: event={}, answer存在={}", 
+                        
+                        if (response.getAnswer() != null) {
+                            String unescapedJson = response.getAnswer()
+                                    .replace("&quot;", "\"")
+                                    .replace("&amp;", "&")
+                                    .replace("&lt;", "<")
+                                    .replace("&gt;", ">")
+                                    .replace("\\n", "\n")
+                                    .replace("\\\"", "\"");
+                            response.setAnswer(unescapedJson);
+                        }
+                        
+                        log.info("【Dify AI对话】解析成功: event={}, answer存在={}", 
                                 response.getEvent(), response.getAnswer() != null);
                         return response;
                     } catch (Exception e) {
-                        log.error("解析Dify响应失败: {}", block, e);
+                        log.error("解析Dify响应失败: {}", data, e);
                         return null;
                     }
                 })

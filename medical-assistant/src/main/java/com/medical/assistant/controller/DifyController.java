@@ -32,35 +32,20 @@ public class DifyController {
                                      @RequestParam(required = false) String conversationId) {
         log.info("【Dify对话接口】收到请求: userInput={}, userId={}", userInput, userId);
         
-        return difyService.chatWithDify(userInput, userId, conversationId)
-                .doOnSubscribe(s -> log.info("【Dify对话】开始订阅流"))
-                .doOnNext(response -> log.info("【控制器】收到响应: event={}, answer={}, 完整内容: {}", 
-                    response.getEvent(), response.getAnswer() != null ? "有内容" : "无内容",
-                    response.getAnswer() != null ? response.getAnswer().substring(0, Math.min(200, response.getAnswer().length())) : "null"))
-                .doOnError(error -> log.error("【Dify对话】流处理错误", error))
-                .doOnComplete(() -> log.info("【控制器】流处理完成"))
-                .map(response -> {
-                    log.info("【Dify对话】处理事件: {}, answer长度: {}", 
-                            response.getEvent(), response.getAnswer() != null ? response.getAnswer().length() : 0);
-                    
-                    if ("message".equals(response.getEvent()) && response.getAnswer() != null) {
-                        String content = response.getAnswer();
-                        log.info("【Dify对话】返回消息内容: {}", content.substring(0, Math.min(100, content.length())));
-                        return "data: {\"event\": \"message\", \"content\": \"" + 
-                                content.replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "") + "\"}\n\n";
-                    } else if ("message_end".equals(response.getEvent())) {
-                        log.info("【Dify对话】对话结束");
+        return transcriptionService.chatWithDifyStream(userInput, userId != null ? userId : "patient_001")
+                .map(content -> {
+                    if (content.equals("[COMPLETED]")) {
+                        log.info("【Dify对话】推送完成事件");
                         return "data: {\"event\": \"completed\", \"message\": \"对话完成\"}\n\n";
-                    } else if ("error".equals(response.getEvent())) {
-                        log.error("【Dify对话】错误事件: {}", response.getAnswer());
-                        return "data: {\"event\": \"error\", \"message\": \"" + 
-                                (response.getAnswer() != null ? response.getAnswer().replace("\"", "\\\"") : "未知错误") + "\"}\n\n";
+                    } else if (content.startsWith("[ERROR]")) {
+                        log.error("【Dify对话】推送错误事件: {}", content);
+                        return "data: {\"event\": \"error\", \"message\": \"" + content.substring(7) + "\"}\n\n";
                     } else {
-                        log.debug("【Dify对话】忽略事件: {}", response.getEvent());
-                        return "";
+                        // 普通文本内容
+                        return "data: {\"event\": \"message\", \"content\": \"" +
+                                content.replace("\"", "\\\"").replace("\n", "\\n") + "\"}\n\n";
                     }
                 })
-                .filter(data -> !data.isEmpty())
                 .onErrorResume(error -> {
                     log.error("【Dify对话】处理失败", error);
                     return Flux.just("data: {\"event\": \"error\", \"message\": \"" + error.getMessage().replace("\"", "\\\"") + "\"}\n\n");

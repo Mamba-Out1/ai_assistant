@@ -509,20 +509,24 @@ public class TranscriptionServiceImpl implements TranscriptionService {
     public Flux<String> chatWithDifyStream(String query, String userId) {
         logger.info("【Dify对话】开始对话，userId: {}, query: {}", userId, query);
         
-        String chatQuery = "用户咨询：" + query;
-        String conversationId = "chat_" + userId;
-        
-        return difyService.generateMedicalSummaryStream(chatQuery, userId, conversationId)
+        return difyService.chatWithDify(query, userId, null)
                 .doOnNext(response -> logger.info("【Dify对话】收到响应: event={}", response.getEvent()))
                 .flatMap(response -> {
                     if ("message".equals(response.getEvent()) && response.getAnswer() != null) {
                         String content = response.getAnswer();
                         logger.info("【Dify对话】处理message事件，内容长度: {}", content.length());
                         return Flux.just(content);
+                    } else if ("message_end".equals(response.getEvent())) {
+                        logger.info("【Dify对话】对话结束");
+                        return Flux.just("[COMPLETED]");
+                    } else if ("error".equals(response.getEvent())) {
+                        logger.error("【Dify对话】错误事件: {}", response.getAnswer());
+                        return Flux.just("[ERROR]" + (response.getAnswer() != null ? response.getAnswer() : "未知错误"));
                     }
                     return Flux.empty();
                 })
-                .concatWith(Flux.just("[COMPLETED]"));
+                .doOnError(error -> logger.error("【Dify对话】流处理错误", error))
+                .doOnComplete(() -> logger.info("【Dify对话】流处理完成"));
     }
 
     @Override
