@@ -246,6 +246,7 @@
                 const reader = summaryResponse.body.getReader();
                 const decoder = new TextDecoder();
                 let summaryContent = '';
+                let jsonSummary = null;
 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -260,21 +261,70 @@
                                 const data = JSON.parse(line.substring(6));
 
                                 if (data.event === 'completed') {
-                                    resultDiv.className = 'result success';
-                                    resultDiv.innerHTML = `
-                                        <strong>✅ 完整流程测试成功！</strong><br>
-                                        visitId: ${visitId}<br>
-                                        生成的病历总结：<br>
-                                        <pre>${summaryContent}</pre>
-                                    `;
+                                    if (jsonSummary && jsonSummary.properties) {
+                                        // 格式化显示JSON格式的病历总结
+                                        let formattedSummary = '<strong>✅ 完整流程测试成功！</strong><br>';
+                                        formattedSummary += `visitId: ${visitId}<br><br>`;
+                                        formattedSummary += '<div style="background: white; border-radius: 8px; overflow: hidden; border: 1px solid #ddd;">';
+                                        
+                                        if (jsonSummary.properties.symptom_details) {
+                                            formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                <strong style="color: #007bff;">🔍 症状详情</strong>
+                                                <p style="margin: 8px 0; color: #333;">${jsonSummary.properties.symptom_details.description}</p>
+                                            </div>`;
+                                        }
+                                        if (jsonSummary.properties.vital_signs) {
+                                            formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                <strong style="color: #dc3545;">❤️ 生命体征</strong>
+                                                <p style="margin: 8px 0; color: #333;">${jsonSummary.properties.vital_signs.description}</p>
+                                            </div>`;
+                                        }
+                                        if (jsonSummary.properties.past_medical_history) {
+                                            formattedSummary += `<div style="padding: 15px; border-bottom: 1px solid #eee;">
+                                                <strong style="color: #ffc107;">📋 既往病史</strong>
+                                                <p style="margin: 8px 0; color: #333;">${jsonSummary.properties.past_medical_history.description}</p>
+                                            </div>`;
+                                        }
+                                        if (jsonSummary.properties.current_medications) {
+                                            formattedSummary += `<div style="padding: 15px;">
+                                                <strong style="color: #17a2b8;">💊 当前用药</strong>
+                                                <p style="margin: 8px 0; color: #333;">${jsonSummary.properties.current_medications.description}</p>
+                                            </div>`;
+                                        }
+                                        
+                                        formattedSummary += '</div>';
+                                        resultDiv.className = 'result success';
+                                        resultDiv.innerHTML = formattedSummary;
+                                    } else {
+                                        resultDiv.className = 'result success';
+                                        resultDiv.innerHTML = `
+                                            <strong>✅ 完整流程测试成功！</strong><br>
+                                            visitId: ${visitId}<br>
+                                            生成的病历总结：<br>
+                                            <pre>${summaryContent}</pre>
+                                        `;
+                                    }
                                     return;
                                 } else if (data.event === 'error') {
                                     resultDiv.className = 'result error';
                                     resultDiv.innerHTML = `❌ 生成失败: ${data.message}`;
                                     return;
                                 } else if (data.event === 'message' && data.content) {
-                                    summaryContent += data.content;
-                                    resultDiv.innerHTML = `🔄 正在生成...<br><pre>${summaryContent}</pre>`;
+                                    // 检查是否是JSON格式
+                                    if (typeof data.content === 'object') {
+                                        jsonSummary = data.content;
+                                        summaryContent = JSON.stringify(data.content);
+                                    } else if (typeof data.content === 'string' && data.content.trim().startsWith('{')) {
+                                        try {
+                                            jsonSummary = JSON.parse(data.content);
+                                            summaryContent = data.content;
+                                        } catch (e) {
+                                            summaryContent += data.content;
+                                        }
+                                    } else {
+                                        summaryContent += (typeof data.content === 'string' ? data.content : JSON.stringify(data.content));
+                                    }
+                                    resultDiv.innerHTML = `🔄 正在生成...<br><pre>${summaryContent.substring(0, 500)}</pre>`;
                                 }
                             } catch (e) {
                                 console.error('解析SSE数据失败:', e);
