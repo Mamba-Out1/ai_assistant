@@ -4,6 +4,7 @@ import lombok.Data;
 
 @Data
 public class DoctorDto {
+    private Long id;
     private String doctorId;
     private String name;
     private String specialization;

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>医生API测试</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        button { padding: 8px 16px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        .result { margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 3px; white-space: pre-wrap; }
+        .error { background: #f8d7da; color: #721c24; }
+        .success { background: #d4edda; color: #155724; }
+    </style>
+</head>
+<body>
+    <h1>医生API测试页面</h1>
+    <p>用于测试和验证医生信息管理API的功能</p>
+
+    <div class="test-section">
+        <h3>1. 创建测试医生</h3>
+        <button onclick="createTestDoctor()">创建测试医生</button>
+        <div id="createResult" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>2. 获取所有医生</h3>
+        <button onclick="getAllDoctors()">获取医生列表</button>
+        <div id="getAllResult" class="result" style="display:none;"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>3. 更新医生信息（测试undefined问题）</h3>
+        <button onclick="updateFirstDoctor()">更新第一个医生</button>
+        <div id="updateResult" class="result" style="display:none;"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/doctors';
+        let testDoctorId = null;
+
+        async function createTestDoctor() {
+            const resultDiv = document.getElementById('createResult');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result';
+            resultDiv.textContent = '正在创建测试医生...';
+
+            try {
+                const testData = {
+                    doctorId: 'TEST_DOC_' + Date.now(),
+                    name: '测试医生',
+                    specialization: '内科',
+                    phone: '13800138000',
+                    email: 'test@example.com',
+                    status: 'ACTIVE'
+                };
+
+                console.log('创建医生数据:', testData);
+
+                const response = await fetch(API_BASE, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(testData)
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+
+                const result = await response.json();
+                console.log('创建成功:', result);
+                testDoctorId = result.id;
+
+                resultDiv.className = 'result success';
+                resultDiv.textContent = `创建成功！\n医生ID: ${result.id}\n医生编号: ${result.doctorId}\n姓名: ${result.name}`;
+
+            } catch (error) {
+                console.error('创建失败:', error);
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `创建失败: ${error.message}`;
+            }
+        }
+
+        async function getAllDoctors() {
+            const resultDiv = document.getElementById('getAllResult');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result';
+            resultDiv.textContent = '正在获取医生列表...';
+
+            try {
+                console.log('请求URL:', API_BASE);
+
+                const response = await fetch(API_BASE);
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+
+                const doctors = await response.json();
+                console.log('获取成功:', doctors);
+
+                resultDiv.className = 'result success';
+                resultDiv.textContent = `获取成功！共 ${doctors.length} 位医生:\n\n` + 
+                    doctors.map(d => `ID: ${d.id}, 编号: ${d.doctorId}, 姓名: ${d.name}, 状态: ${d.status}`).join('\n');
+
+            } catch (error) {
+                console.error('获取失败:', error);
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `获取失败: ${error.message}`;
+            }
+        }
+
+        async function updateFirstDoctor() {
+            const resultDiv = document.getElementById('updateResult');
+            resultDiv.style.display = 'block';
+            resultDiv.className = 'result';
+            resultDiv.textContent = '正在更新医生信息...';
+
+            try {
+                // 首先获取医生列表
+                const response = await fetch(API_BASE);
+                if (!response.ok) {
+                    throw new Error('无法获取医生列表');
+                }
+
+                const doctors = await response.json();
+                if (doctors.length === 0) {
+                    throw new Error('没有医生可以更新，请先创建医生');
+                }
+
+                const firstDoctor = doctors[0];
+                console.log('要更新的医生:', firstDoctor);
+
+                // 检查是否有有效的ID
+                if (!firstDoctor.id) {
+                    throw new Error('医生ID为空，这就是导致undefined错误的原因！');
+                }
+
+                // 更新医生信息
+                const updateData = {
+                    doctorId: firstDoctor.doctorId,
+                    name: firstDoctor.name + ' (已更新)',
+                    specialization: firstDoctor.specialization,
+                    phone: firstDoctor.phone,
+                    email: firstDoctor.email,
+                    status: firstDoctor.status
+                };
+
+                console.log('更新数据:', updateData);
+                console.log('更新URL:', `${API_BASE}/${firstDoctor.id}`);
+
+                const updateResponse = await fetch(`${API_BASE}/${firstDoctor.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(updateData)
+                });
+
+                if (!updateResponse.ok) {
+                    const errorText = await updateResponse.text();
+                    throw new Error(`HTTP ${updateResponse.status}: ${errorText}`);
+                }
+
+                const result = await updateResponse.json();
+                console.log('更新成功:', result);
+
+                resultDiv.className = 'result success';
+                resultDiv.textContent = `更新成功！\n医生ID: ${result.id}\n医生编号: ${result.doctorId}\n姓名: ${result.name}\n状态: ${result.status}`;
+
+            } catch (error) {
+                console.error('更新失败:', error);
+                resultDiv.className = 'result error';
+                resultDiv.textContent = `更新失败: ${error.message}`;
+            }
+        }
+
+        // 页面加载时自动获取医生列表
+        window.addEventListener('load', function() {
+            console.log('页面加载完成，自动获取医生列表');
+            getAllDoctors();
+        });
+    </script>
+</body>
+</html>

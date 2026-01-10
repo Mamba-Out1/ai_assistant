@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>医生信息管理系统</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .header { text-align: center; margin-bottom: 30px; color: #333; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .form-group { margin: 10px 0; }
+        .form-group label { display: inline-block; width: 100px; font-weight: bold; }
+        .form-group input, .form-group select { padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 3px; width: 200px; }
+        button { padding: 10px 20px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        button.danger { background: #dc3545; }
+        button.danger:hover { background: #c82333; }
+        button.success { background: #28a745; }
+        button.success:hover { background: #218838; }
+        .result { margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 3px; max-height: 400px; overflow-y: auto; }
+        .error { background: #f8d7da; color: #721c24; }
+        .success { background: #d4edda; color: #155724; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #f2f2f2; }
+        .loading { color: #007bff; }
+        .doctor-form { display: none; }
+        .doctor-form.show { display: block; }
+        .action-buttons { text-align: center; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏥 医生信息管理系统</h1>
+            <p>管理员界面 - 医生信息增删改查</p>
+        </div>
+        
+        <div class="action-buttons">
+            <button onclick="showAddForm()" class="success">➕ 添加医生</button>
+            <button onclick="loadAllDoctors()">🔄 刷新列表</button>
+        </div>
+
+        <!-- 添加/编辑医生表单 -->
+        <div id="doctorForm" class="section doctor-form">
+            <h3 id="formTitle">添加医生</h3>
+            <form id="doctorFormElement">
+                <input type="hidden" id="doctorDbId" value="">
+                <div class="form-group">
+                    <label for="doctorId">医生编号:</label>
+                    <input type="text" id="doctorId" placeholder="如: DOC001" required>
+                </div>
+                <div class="form-group">
+                    <label for="name">姓名:</label>
+                    <input type="text" id="name" placeholder="医生姓名" required>
+                </div>
+                <div class="form-group">
+                    <label for="specialization">专科:</label>
+                    <input type="text" id="specialization" placeholder="如: 内科、外科等">
+                </div>
+                <div class="form-group">
+                    <label for="phone">电话:</label>
+                    <input type="text" id="phone" placeholder="联系电话">
+                </div>
+                <div class="form-group">
+                    <label for="email">邮箱:</label>
+                    <input type="email" id="email" placeholder="邮箱地址">
+                </div>
+                <div class="form-group">
+                    <label for="status">状态:</label>
+                    <select id="status">
+                        <option value="ACTIVE">激活</option>
+                        <option value="INACTIVE">停用</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <button type="submit" class="success">💾 保存</button>
+                    <button type="button" onclick="hideForm()">❌ 取消</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 医生列表 -->
+        <div class="section">
+            <h3>医生列表</h3>
+            <div id="doctorsResult" class="result">
+                <div class="loading">点击"刷新列表"加载医生信息...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/doctors';
+        let currentEditingId = null;
+
+        // 页面加载时自动获取医生列表
+        document.addEventListener('DOMContentLoaded', function() {
+            loadAllDoctors();
+        });
+
+        // 显示添加表单
+        function showAddForm() {
+            document.getElementById('formTitle').textContent = '添加医生';
+            document.getElementById('doctorFormElement').reset();
+            document.getElementById('doctorDbId').value = '';
+            currentEditingId = null;
+            document.getElementById('doctorForm').classList.add('show');
+        }
+
+        // 显示编辑表单
+        function showEditForm(doctor) {
+            document.getElementById('formTitle').textContent = '编辑医生信息';
+            document.getElementById('doctorDbId').value = doctor.id;
+            document.getElementById('doctorId').value = doctor.doctorId || '';
+            document.getElementById('name').value = doctor.name || '';
+            document.getElementById('specialization').value = doctor.specialization || '';
+            document.getElementById('phone').value = doctor.phone || '';
+            document.getElementById('email').value = doctor.email || '';
+            document.getElementById('status').value = doctor.status || 'ACTIVE';
+            currentEditingId = doctor.id;
+            document.getElementById('doctorForm').classList.add('show');
+        }
+
+        // 隐藏表单
+        function hideForm() {
+            document.getElementById('doctorForm').classList.remove('show');
+            currentEditingId = null;
+        }
+
+        // 表单提交处理
+        document.getElementById('doctorFormElement').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = {
+                doctorId: document.getElementById('doctorId').value,
+                name: document.getElementById('name').value,
+                specialization: document.getElementById('specialization').value,
+                phone: document.getElementById('phone').value,
+                email: document.getElementById('email').value,
+                status: document.getElementById('status').value
+            };
+
+            try {
+                let response;
+                if (currentEditingId) {
+                    // 更新医生信息
+                    console.log('更新医生信息，ID:', currentEditingId, '数据:', formData);
+                    response = await fetch(`${API_BASE}/${currentEditingId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(formData)
+                    });
+                } else {
+                    // 添加新医生
+                    console.log('添加新医生，数据:', formData);
+                    response = await fetch(API_BASE, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(formData)
+                    });
+                }
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+
+                const result = await response.json();
+                console.log('操作成功:', result);
+                
+                showMessage('操作成功！', 'success');
+                hideForm();
+                loadAllDoctors(); // 刷新列表
+                
+            } catch (error) {
+                console.error('操作失败:', error);
+                showMessage('操作失败: ' + error.message, 'error');
+            }
+        });
+
+        // 获取所有医生
+        async function loadAllDoctors() {
+            const resultDiv = document.getElementById('doctorsResult');
+            resultDiv.innerHTML = '<div class="loading">正在加载医生信息...</div>';
+
+            try {
+                console.log('请求URL:', API_BASE);
+                const response = await fetch(API_BASE);
+                console.log('响应状态:', response.status);
+                
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+                
+                const doctors = await response.json();
+                console.log('获取到的医生数据:', doctors);
+                
+                if (doctors.length === 0) {
+                    resultDiv.innerHTML = '<div>暂无医生信息</div>';
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="success">成功获取 ${doctors.length} 位医生信息</div>
+                        ${renderDoctorsTable(doctors)}
+                    `;
+                }
+            } catch (error) {
+                console.error('请求失败:', error);
+                resultDiv.innerHTML = `
+                    <div class="error">
+                        获取失败: ${error.message}<br>
+                        请检查：<br>
+                        1. 后端服务是否启动<br>
+                        2. 数据库是否连接正常<br>
+                        3. 浏览器控制台是否有详细错误信息
+                    </div>
+                `;
+            }
+        }
+
+        // 删除医生
+        async function deleteDoctor(id, name) {
+            if (!confirm(`确定要删除医生 "${name}" 吗？此操作不可恢复！`)) {
+                return;
+            }
+
+            try {
+                console.log('删除医生，ID:', id);
+                const response = await fetch(`${API_BASE}/${id}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errorText}`);
+                }
+
+                console.log('删除成功');
+                showMessage('删除成功！', 'success');
+                loadAllDoctors(); // 刷新列表
+                
+            } catch (error) {
+                console.error('删除失败:', error);
+                showMessage('删除失败: ' + error.message, 'error');
+            }
+        }
+
+        // 渲染医生表格
+        function renderDoctorsTable(doctors) {
+            return `
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>医生编号</th>
+                            <th>姓名</th>
+                            <th>专科</th>
+                            <th>电话</th>
+                            <th>邮箱</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${doctors.map(doctor => `
+                            <tr>
+                                <td>${doctor.id || '-'}</td>
+                                <td>${doctor.doctorId || '-'}</td>
+                                <td>${doctor.name || '-'}</td>
+                                <td>${doctor.specialization || '-'}</td>
+                                <td>${doctor.phone || '-'}</td>
+                                <td>${doctor.email || '-'}</td>
+                                <td>
+                                    <span style="color: ${doctor.status === 'ACTIVE' ? 'green' : 'red'}">
+                                        ${doctor.status === 'ACTIVE' ? '激活' : '停用'}
+                                    </span>
+                                </td>
+                                <td>
+                                    <button onclick="showEditForm(${JSON.stringify(doctor).replace(/"/g, '&quot;')})" 
+                                            style="background: #ffc107; color: #212529;">
+                                        ✏️ 编辑
+                                    </button>
+                                    <button onclick="deleteDoctor(${doctor.id}, '${doctor.name}')" 
+                                            class="danger">
+                                        🗑️ 删除
+                                    </button>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        // 显示消息
+        function showMessage(message, type) {
+            // 创建消息元素
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `result ${type}`;
+            messageDiv.textContent = message;
+            messageDiv.style.position = 'fixed';
+            messageDiv.style.top = '20px';
+            messageDiv.style.right = '20px';
+            messageDiv.style.zIndex = '1000';
+            messageDiv.style.minWidth = '300px';
+            
+            document.body.appendChild(messageDiv);
+            
+            // 3秒后自动移除
+            setTimeout(() => {
+                if (messageDiv.parentNode) {
+                    messageDiv.parentNode.removeChild(messageDiv);
+                }
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
